@@ -55,9 +55,17 @@ stack, including GTK and WebKitGTK.
 
 ## Install
 
-Install locally to `~/.local`:
+One-command install to `~/.local`:
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/OldJobobo/jobowalls/master/install.sh | bash
+```
+
+Or clone and install from a checkout:
+
+```bash
+git clone https://github.com/OldJobobo/jobowalls.git
+cd jobowalls
 ./install.sh
 ```
 
@@ -72,6 +80,12 @@ This installs:
 Make sure `~/.local/bin` is in your `PATH`.
 
 To install somewhere else:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/OldJobobo/jobowalls/master/install.sh | PREFIX=/usr/local bash
+```
+
+Or from a checkout:
 
 ```bash
 PREFIX=/usr/local ./install.sh
@@ -318,4 +332,3 @@ bind = SUPER, W, exec, jobowalls-gui
 
 The tool only stops live wallpaper processes that it recorded as owned in its
 state file.
-
