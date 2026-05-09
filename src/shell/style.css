@@ -1,6 +1,10 @@
+.shell-window {
+  background: transparent;
+}
+
 .shell-root {
   background: transparent;
-  padding: 10px 14px;
+  padding: 0;
 }
 
 .carousel {

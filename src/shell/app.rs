@@ -93,6 +93,7 @@ fn build_ui(
         .default_height(args.height)
         .resizable(false)
         .build();
+    window.add_css_class("shell-window");
     layer::configure(&window, &args);
 
     render(&window, state.clone());
