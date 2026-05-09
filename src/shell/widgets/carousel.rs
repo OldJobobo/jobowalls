@@ -45,6 +45,7 @@ pub fn build(
         visible.extend(visible_indexes(len, previous_selected));
     }
 
+    let mut cards = Vec::new();
     for index in visible {
         let target_slot = slot_for_index(len, selected, index);
         let start_slot =
@@ -55,6 +56,12 @@ pub fn build(
             animation_progress,
             animation_direction,
         );
+        cards.push((index, slot));
+    }
+
+    cards.sort_by(|(_, a), (_, b)| b.abs().total_cmp(&a.abs()));
+
+    for (index, slot) in cards {
         let role = role_for_slot(slot);
         let (width, height) = thumbnail::dimensions(role);
         let card = thumbnail::build(
@@ -62,8 +69,9 @@ pub fn build(
             role,
             is_active(items, Some(index), active_wallpaper),
             animate_live,
+            index == selected,
         );
-        card.set_opacity(opacity_for_slot(slot));
+        card.set_opacity(opacity_for_slot(slot, index == selected));
         let x = slot_center(slot) - f64::from(width) / 2.0;
         let y = (f64::from(STAGE_HEIGHT - height) / 2.0).max(0.0);
         root.put(&card, x, y);
@@ -156,7 +164,11 @@ fn center_for_slot(slot: isize) -> f64 {
         .unwrap_or(380.0)
 }
 
-fn opacity_for_slot(slot: f64) -> f64 {
+fn opacity_for_slot(slot: f64, is_selected: bool) -> f64 {
+    if is_selected {
+        return 1.0;
+    }
+
     let distance = slot.abs();
     if distance < 0.5 {
         1.0

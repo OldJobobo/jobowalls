@@ -47,6 +47,10 @@
   opacity: 1;
 }
 
+.top-card {
+  opacity: 1;
+}
+
 .active {
   border-bottom-color: #75c7a1;
 }

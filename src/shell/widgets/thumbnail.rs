@@ -23,6 +23,7 @@ pub fn build(
     role: ThumbnailRole,
     active: bool,
     animate_live: bool,
+    force_top: bool,
 ) -> gtk::Box {
     let root = gtk::Box::new(gtk::Orientation::Vertical, 4);
     root.add_css_class("thumb");
@@ -33,6 +34,9 @@ pub fn build(
     }
     if active {
         root.add_css_class("active");
+    }
+    if force_top {
+        root.add_css_class("top-card");
     }
     let (width, height) = dimensions(role);
     root.set_width_request(width);
