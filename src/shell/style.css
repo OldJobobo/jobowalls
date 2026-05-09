@@ -8,8 +8,8 @@
 }
 
 .carousel {
-  min-width: 760px;
-  min-height: 154px;
+  min-width: 860px;
+  min-height: 204px;
 }
 
 .thumb {
@@ -42,6 +42,10 @@
   opacity: 0.52;
 }
 
+.outer-neighbor {
+  opacity: 0.34;
+}
+
 .selected {
   border-bottom-color: #d8a74f;
   opacity: 1;
@@ -55,15 +59,17 @@
   border-bottom-color: #75c7a1;
 }
 
-.live-label {
-  font-weight: 700;
-  letter-spacing: 0;
-  margin-top: 2px;
+.live-badge {
+  color: #f3efe5;
+  font-family: "Symbols Nerd Font";
+  font-size: 15px;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.82);
 }
 
 .status {
   color: #f0c36a;
   font-size: 12px;
+  min-height: 18px;
 }
 
 .empty {

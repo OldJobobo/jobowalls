@@ -1,4 +1,9 @@
 use crate::{
+    backends::{model::Backend, mpvpaper},
+    command::{pid_is_running, signal_pid, terminate_pid},
+    config::Config,
+    media::MediaKind,
+    orchestrator::SetPlan,
     shell::{
         apply::apply_wallpaper,
         cli::ShellArgs,
@@ -19,13 +24,14 @@ use std::{
     collections::HashSet,
     path::PathBuf,
     rc::Rc,
-    sync::mpsc::{self, Receiver, Sender},
+    sync::mpsc::{self, Receiver, RecvTimeoutError, Sender},
     thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 const NAV_ANIMATION_FRAMES: u8 = 10;
-const DESKTOP_PREVIEW_DEBOUNCE_MS: u64 = 120;
+const STATIC_DESKTOP_PREVIEW_DEBOUNCE_MS: u64 = 120;
+const LIVE_DESKTOP_PREVIEW_DEBOUNCE_MS: u64 = 520;
 
 pub fn run() -> Result<()> {
     let args = ShellArgs::parse();
@@ -34,6 +40,7 @@ pub fn run() -> Result<()> {
     let folder = resolve_folder(args.folder.clone(), Some(&shell_state))?;
     let items = scan_folder(&folder)?;
     let selected = initial_selection(&items, &folder, &shell_state);
+    let config = Config::load(&default_config_path())?;
     let active_wallpaper =
         State::load(&runtime_state_path())?.map(|state| PathBuf::from(state.wallpaper));
     let (preview_tx, preview_rx) = mpsc::channel();
@@ -51,6 +58,7 @@ pub fn run() -> Result<()> {
         current_preview_wallpaper: active_wallpaper,
         shell_state,
         shell_state_path,
+        config,
         status: None,
         queued_previews: HashSet::new(),
         preview_tx,
@@ -90,6 +98,7 @@ struct AppState {
     current_preview_wallpaper: Option<PathBuf>,
     shell_state: ShellState,
     shell_state_path: PathBuf,
+    config: Config,
     status: Option<String>,
     queued_previews: HashSet<PathBuf>,
     preview_tx: Sender<()>,
@@ -101,10 +110,19 @@ struct AppState {
 }
 
 #[derive(Debug, Clone)]
-struct DesktopPreviewRequest {
+enum DesktopPreviewRequest {
+    Preview(DesktopPreviewJob),
+    Stop(Sender<()>),
+}
+
+#[derive(Debug, Clone)]
+struct DesktopPreviewJob {
     path: PathBuf,
     monitor: String,
     generation: u64,
+    debounce_ms: u64,
+    is_live: bool,
+    config: Config,
 }
 
 #[derive(Debug)]
@@ -145,6 +163,7 @@ fn build_ui(
     install_animation_tick(&window, state.clone());
     install_keys(&window, state.clone());
     install_pointer_controls(&window, state.clone());
+    install_close_cleanup(&window, state.clone());
     schedule_desktop_preview(&state);
     window.present();
     window.present_with_time(0);
@@ -173,13 +192,12 @@ fn render(window: &gtk::ApplicationWindow, state: Rc<RefCell<AppState>>) {
         ));
     }
 
-    if let Some(status) = &state_ref.status {
-        let label = gtk::Label::new(Some(status));
-        label.add_css_class("status");
-        label.set_wrap(true);
-        label.set_width_request(520);
-        root.append(&label);
-    }
+    let label = gtk::Label::new(state_ref.status.as_deref());
+    label.add_css_class("status");
+    label.set_wrap(true);
+    label.set_width_request(520);
+    label.set_height_request(18);
+    root.append(&label);
 
     window.set_child(Some(&root));
 }
@@ -210,26 +228,91 @@ fn spawn_desktop_preview_worker(
     result_tx: Sender<DesktopPreviewResult>,
 ) {
     thread::spawn(move || {
-        while let Ok(mut request) = request_rx.recv() {
-            while let Ok(next) =
-                request_rx.recv_timeout(Duration::from_millis(DESKTOP_PREVIEW_DEBOUNCE_MS))
-            {
-                request = next;
+        let mut live_preview_pid = None;
+        'worker: while let Ok(request) = request_rx.recv() {
+            let mut request = match request {
+                DesktopPreviewRequest::Preview(request) => {
+                    stop_live_preview(&mut live_preview_pid);
+                    request
+                }
+                DesktopPreviewRequest::Stop(done_tx) => {
+                    stop_live_preview(&mut live_preview_pid);
+                    let _ = done_tx.send(());
+                    continue 'worker;
+                }
+            };
+
+            loop {
+                match request_rx.recv_timeout(Duration::from_millis(request.debounce_ms)) {
+                    Ok(DesktopPreviewRequest::Preview(next)) => {
+                        stop_live_preview(&mut live_preview_pid);
+                        request = next;
+                    }
+                    Ok(DesktopPreviewRequest::Stop(done_tx)) => {
+                        stop_live_preview(&mut live_preview_pid);
+                        let _ = done_tx.send(());
+                        continue 'worker;
+                    }
+                    Err(RecvTimeoutError::Timeout) => break,
+                    Err(RecvTimeoutError::Disconnected) => break 'worker,
+                }
             }
 
-            let result = apply_wallpaper(&request.path, &request.monitor).map_err(|error| {
-                format!(
-                    "desktop preview failed for {}: {error}",
-                    request.path.display()
-                )
-            });
+            let result = if request.is_live {
+                apply_fast_live_preview(&request, &mut live_preview_pid)
+            } else {
+                apply_wallpaper(&request.path, &request.monitor).map_err(|error| {
+                    format!(
+                        "desktop preview failed for {}: {error}",
+                        request.path.display()
+                    )
+                })
+            };
             let _ = result_tx.send(DesktopPreviewResult {
                 path: request.path,
                 generation: request.generation,
                 result,
             });
         }
+        stop_live_preview(&mut live_preview_pid);
     });
+}
+
+fn apply_fast_live_preview(
+    request: &DesktopPreviewJob,
+    live_preview_pid: &mut Option<u32>,
+) -> std::result::Result<(), String> {
+    stop_live_preview(live_preview_pid);
+    let plan = SetPlan {
+        wallpaper: request.path.clone(),
+        media_kind: MediaKind::Live,
+        backend: Backend::Mpvpaper,
+        monitor: request.monitor.clone(),
+    };
+    let command = mpvpaper::start_command(&plan, &request.config.mpvpaper);
+    match command.spawn_detached() {
+        Ok(pid) => {
+            *live_preview_pid = Some(pid);
+            Ok(())
+        }
+        Err(error) => Err(format!(
+            "desktop preview failed for {}: {error}",
+            request.path.display()
+        )),
+    }
+}
+
+fn stop_live_preview(live_preview_pid: &mut Option<u32>) {
+    if let Some(pid) = live_preview_pid.take() {
+        let _ = terminate_pid(pid);
+        let deadline = Instant::now() + Duration::from_millis(500);
+        while pid_is_running(pid) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(25));
+        }
+        if pid_is_running(pid) {
+            let _ = signal_pid(pid, "KILL");
+        }
+    }
 }
 
 fn animation_progress(state: &AppState) -> f64 {
@@ -394,6 +477,13 @@ fn install_pointer_controls(window: &gtk::ApplicationWindow, state: Rc<RefCell<A
     window.add_controller(click);
 }
 
+fn install_close_cleanup(window: &gtk::ApplicationWindow, state: Rc<RefCell<AppState>>) {
+    window.connect_close_request(move |_| {
+        stop_desktop_preview_worker(&state);
+        glib::Propagation::Proceed
+    });
+}
+
 fn move_selection(app_state: &Rc<RefCell<AppState>>, delta: isize) {
     let mut state = app_state.borrow_mut();
     let len = state.items.len();
@@ -458,6 +548,7 @@ fn apply_selected(state: &Rc<RefCell<AppState>>, window: &gtk::ApplicationWindow
         (item.path.clone(), state.args.monitor.clone())
     };
 
+    stop_desktop_preview_worker(state);
     {
         let mut state = state.borrow_mut();
         state.status = Some("Applying...".to_string());
@@ -490,17 +581,27 @@ fn schedule_desktop_preview(state: &Rc<RefCell<AppState>>) {
             return;
         };
         let path = item.path.clone();
+        let is_live = item.is_live();
+        let debounce_ms = if item.is_live() {
+            LIVE_DESKTOP_PREVIEW_DEBOUNCE_MS
+        } else {
+            STATIC_DESKTOP_PREVIEW_DEBOUNCE_MS
+        };
         if state.current_preview_wallpaper.as_ref() == Some(&path) {
             return;
         }
 
         state.desktop_preview_generation += 1;
+        let generation = state.desktop_preview_generation;
         state.status = Some("Previewing...".to_string());
-        DesktopPreviewRequest {
+        DesktopPreviewRequest::Preview(DesktopPreviewJob {
             path,
             monitor: state.args.monitor.clone(),
-            generation: state.desktop_preview_generation,
-        }
+            generation,
+            debounce_ms,
+            is_live,
+            config: state.config.clone(),
+        })
     };
 
     let _ = state.borrow().desktop_request_tx.send(request);
@@ -514,6 +615,7 @@ fn restore_original_and_close(state: &Rc<RefCell<AppState>>, window: &gtk::Appli
         (original, state.args.monitor.clone(), needs_restore)
     };
 
+    stop_desktop_preview_worker(state);
     if let Some(original) = original
         && needs_restore
     {
@@ -527,6 +629,15 @@ fn restore_original_and_close(state: &Rc<RefCell<AppState>>, window: &gtk::Appli
     }
 
     window.close();
+}
+
+fn stop_desktop_preview_worker(state: &Rc<RefCell<AppState>>) {
+    let (done_tx, done_rx) = mpsc::channel();
+    let _ = state
+        .borrow()
+        .desktop_request_tx
+        .send(DesktopPreviewRequest::Stop(done_tx));
+    let _ = done_rx.recv_timeout(Duration::from_millis(800));
 }
 
 fn rescan(state: &Rc<RefCell<AppState>>) {
@@ -569,4 +680,11 @@ fn load_css() {
             gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
         );
     }
+}
+
+fn default_config_path() -> PathBuf {
+    dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("jobowalls")
+        .join("config.toml")
 }

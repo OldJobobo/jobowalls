@@ -5,16 +5,16 @@ use crate::shell::{
 use gtk::prelude::*;
 use std::{collections::BTreeSet, path::Path};
 
-const STAGE_WIDTH: i32 = 760;
-const STAGE_HEIGHT: i32 = 154;
+const STAGE_WIDTH: i32 = 860;
+const STAGE_HEIGHT: i32 = 204;
 const SLOT_CENTERS: [(isize, f64); 7] = [
-    (-3, -30.0),
-    (-2, 90.0),
-    (-1, 230.0),
-    (0, 380.0),
-    (1, 530.0),
-    (2, 670.0),
-    (3, 790.0),
+    (-3, 42.0),
+    (-2, 155.0),
+    (-1, 320.0),
+    (0, 430.0),
+    (1, 540.0),
+    (2, 705.0),
+    (3, 818.0),
 ];
 
 pub fn build(
@@ -63,7 +63,7 @@ pub fn build(
 
     for (index, slot) in cards {
         let role = role_for_slot(slot);
-        let (width, height) = thumbnail::dimensions(role);
+        let (width, _) = thumbnail::dimensions(role);
         let card = thumbnail::build(
             Some(&items[index]),
             role,
@@ -73,7 +73,7 @@ pub fn build(
         );
         card.set_opacity(opacity_for_slot(slot, index == selected));
         let x = slot_center(slot) - f64::from(width) / 2.0;
-        let y = (f64::from(STAGE_HEIGHT - height) / 2.0).max(0.0);
+        let y = centered_y_for_role(role);
         root.put(&card, x, y);
     }
 
@@ -81,7 +81,7 @@ pub fn build(
 }
 
 fn visible_indexes(len: usize, selected: usize) -> BTreeSet<usize> {
-    (-2..=2)
+    (-3..=3)
         .filter_map(|offset| offset_index(len, selected, offset))
         .collect()
 }
@@ -100,10 +100,6 @@ fn offset_index(len: usize, selected: usize, offset: isize) -> Option<usize> {
         return None;
     }
 
-    if len < 5 && distance == 2 {
-        return None;
-    }
-
     let index = if offset < 0 {
         (selected + len - distance) % len
     } else {
@@ -113,7 +109,7 @@ fn offset_index(len: usize, selected: usize, offset: isize) -> Option<usize> {
 }
 
 fn slot_for_index(len: usize, selected: usize, index: usize) -> Option<isize> {
-    (-2..=2).find(|offset| offset_index(len, selected, *offset) == Some(index))
+    (-3..=3).find(|offset| offset_index(len, selected, *offset) == Some(index))
 }
 
 fn interpolated_slot(
@@ -138,10 +134,14 @@ fn role_for_slot(slot: f64) -> ThumbnailRole {
         ThumbnailRole::Previous
     } else if rounded == 1 {
         ThumbnailRole::Next
-    } else if rounded < 0 {
+    } else if rounded == -2 {
         ThumbnailRole::FarPrevious
-    } else {
+    } else if rounded == 2 {
         ThumbnailRole::FarNext
+    } else if rounded < 0 {
+        ThumbnailRole::OuterPrevious
+    } else {
+        ThumbnailRole::OuterNext
     }
 }
 
@@ -176,9 +176,16 @@ fn opacity_for_slot(slot: f64, is_selected: bool) -> f64 {
         0.76
     } else if distance < 2.5 {
         0.52
+    } else if distance < 3.5 {
+        0.34
     } else {
-        0.0
+        0.22
     }
+}
+
+fn centered_y_for_role(role: ThumbnailRole) -> f64 {
+    let (_, height) = thumbnail::dimensions(role);
+    f64::from(STAGE_HEIGHT - height) / 2.0
 }
 
 fn is_active(
@@ -189,4 +196,71 @@ fn is_active(
     index
         .and_then(|index| active_wallpaper.map(|active| items[index].path == active))
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stage_is_tall_enough_for_selected_card_shadow_allocation() {
+        let (_, selected_height) = thumbnail::dimensions(ThumbnailRole::Selected);
+
+        assert!(STAGE_HEIGHT >= selected_height);
+    }
+
+    #[test]
+    fn visible_indexes_wrap_around_selected_item() {
+        let visible = visible_indexes(10, 0);
+
+        assert_eq!(visible, BTreeSet::from([0, 1, 2, 3, 7, 8, 9]));
+    }
+
+    #[test]
+    fn visible_indexes_avoid_duplicate_far_cards_for_small_sets() {
+        let visible = visible_indexes(3, 1);
+
+        assert_eq!(visible, BTreeSet::from([0, 1, 2]));
+    }
+
+    #[test]
+    fn visible_indexes_include_seven_cards_when_available() {
+        let visible = visible_indexes(12, 6);
+
+        assert_eq!(visible.len(), 7);
+        assert_eq!(visible, BTreeSet::from([3, 4, 5, 6, 7, 8, 9]));
+    }
+
+    #[test]
+    fn interpolation_moves_cards_smoothly_between_slots() {
+        let slot = interpolated_slot(Some(-1), Some(0), 0.25, 1);
+
+        assert_eq!(slot, -0.75);
+    }
+
+    #[test]
+    fn slot_center_interpolates_between_neighbor_centers() {
+        let center = slot_center(-0.5);
+
+        assert_eq!(center, 375.0);
+    }
+
+    #[test]
+    fn selected_card_is_always_fully_opaque() {
+        assert_eq!(opacity_for_slot(2.0, true), 1.0);
+    }
+
+    #[test]
+    fn outer_slots_use_outer_thumbnail_roles() {
+        assert_eq!(role_for_slot(-3.0), ThumbnailRole::OuterPrevious);
+        assert_eq!(role_for_slot(3.0), ThumbnailRole::OuterNext);
+    }
+
+    #[test]
+    fn non_selected_cards_are_vertically_centered_in_stage() {
+        assert!(centered_y_for_role(ThumbnailRole::Previous) > 0.0);
+        assert!(centered_y_for_role(ThumbnailRole::FarPrevious) > 0.0);
+        assert!(centered_y_for_role(ThumbnailRole::OuterPrevious) > 0.0);
+        assert_eq!(centered_y_for_role(ThumbnailRole::Previous), 33.0);
+    }
 }

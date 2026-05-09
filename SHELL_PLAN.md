@@ -405,6 +405,8 @@ MVP preview policy:
   background while browsing.
 - Desktop live preview is debounced so fast scrolling does not spawn a backend
   command for every intermediate card.
+- Live/video wallpaper desktop preview uses a longer settle debounce than static
+  wallpapers because starting live backends is materially more expensive.
 - `Enter` keeps the currently previewed wallpaper and closes.
 - `Escape` restores the original wallpaper when a live desktop preview changed
   it, then closes.
