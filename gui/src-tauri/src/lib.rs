@@ -252,7 +252,7 @@ fn get_media_data_source(path: String) -> Result<MediaSource, String> {
     let preview_path = if matches!(kind, MediaKind::Live) {
         generate_video_poster(&path_buf)?
     } else {
-        path_buf
+        generate_static_preview(&path_buf).unwrap_or(path_buf)
     };
 
     data_source(path, &preview_path)
@@ -370,6 +370,51 @@ fn data_source(path: String, preview_path: &Path) -> Result<MediaSource, String>
         path,
         src: Some(format!("data:{mime};base64,{encoded}")),
         reason: None,
+    })
+}
+
+fn generate_static_preview(path: &Path) -> Result<PathBuf, String> {
+    let cache_path = static_preview_cache_path(path)?;
+    if cache_path.exists() {
+        return Ok(cache_path);
+    }
+
+    if let Some(parent) = cache_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "failed to create thumbnail cache {}: {error}",
+                parent.display()
+            )
+        })?;
+    }
+
+    with_generation_lock(cache_path.clone(), || {
+        if cache_path.exists() {
+            return Ok(cache_path);
+        }
+
+        let status = match Command::new("ffmpeg")
+            .args(["-y", "-hide_banner", "-loglevel", "error", "-i"])
+            .arg(path)
+            .args(["-frames:v", "1", "-vf", "scale=960:-1", "-q:v", "5"])
+            .arg(&cache_path)
+            .status()
+        {
+            Ok(status) => status,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Err("ffmpeg is required for static thumbnail generation".to_string());
+            }
+            Err(error) => return Err(format!("failed to start ffmpeg: {error}")),
+        };
+
+        if status.success() && cache_path.exists() {
+            Ok(cache_path)
+        } else {
+            Err(format!(
+                "failed to generate static preview for {}",
+                path.display()
+            ))
+        }
     })
 }
 
@@ -522,6 +567,10 @@ fn try_ffmpeg(input: &Path, output: &Path) -> Result<bool, String> {
 
 fn video_poster_cache_path(path: &Path) -> Result<PathBuf, String> {
     video_cache_path(path, "jpg")
+}
+
+fn static_preview_cache_path(path: &Path) -> Result<PathBuf, String> {
+    video_cache_path(path, "static.jpg")
 }
 
 fn video_animation_cache_path(path: &Path) -> Result<PathBuf, String> {

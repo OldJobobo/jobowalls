@@ -1,6 +1,6 @@
 [package]
 name = "jobowalls-gui"
-version = "0.1.5"
+version = "0.1.6"
 description = "Minimal visual picker for jobowalls"
 authors = ["jobowalls"]
 edition = "2021"

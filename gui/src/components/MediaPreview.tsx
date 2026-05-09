@@ -18,6 +18,7 @@ type Props = {
 
 const sourceCache = new Map<string, Promise<MediaSource>>();
 const fallbackCache = new Map<string, Promise<MediaSource>>();
+let assetPreviewFailed = window.localStorage.getItem("jobowalls:assetPreviewFailed") === "1";
 
 export default function MediaPreview({ item, className, alt, decorative, playLive }: Props) {
   const [src, setSrc] = useState<string | null>(null);
@@ -32,14 +33,14 @@ export default function MediaPreview({ item, className, alt, decorative, playLiv
     async function load() {
       try {
         if (item.kind === "live" && playLive) {
-          void cachedMediaSource(item.path).then((poster) => {
+          void cachedPreferredMediaSource(item.path).then((poster) => {
             if (!cancelled) {
               setSrc((current) => current ?? poster.src);
               setFailed(!poster.src);
             }
           });
 
-          const animated = await cachedLivePreviewSource(item.path);
+          const animated = await cachedPreferredLivePreviewSource(item.path);
           if (!cancelled) {
             setSrc((current) => animated.src ?? current);
             setFailed(!animated.src);
@@ -47,7 +48,7 @@ export default function MediaPreview({ item, className, alt, decorative, playLiv
           return;
         }
 
-        const result = await cachedMediaSource(item.path);
+        const result = await cachedPreferredMediaSource(item.path);
         if (!cancelled) {
           setSrc((current) => result.src ?? current);
           setFailed(!result.src);
@@ -66,6 +67,8 @@ export default function MediaPreview({ item, className, alt, decorative, playLiv
   }, [item.kind, item.path, playLive]);
 
   async function loadFallback() {
+    assetPreviewFailed = true;
+    window.localStorage.setItem("jobowalls:assetPreviewFailed", "1");
     if (fallbackTried) {
       setFailed(true);
       return;
@@ -100,6 +103,14 @@ export default function MediaPreview({ item, className, alt, decorative, playLiv
       {item.kind === "live" ? <Video size={24} /> : <ImageIcon size={24} />}
     </span>
   );
+}
+
+function cachedPreferredMediaSource(path: string) {
+  return assetPreviewFailed ? cachedMediaDataSource(path) : cachedMediaSource(path);
+}
+
+function cachedPreferredLivePreviewSource(path: string) {
+  return assetPreviewFailed ? cachedLivePreviewDataSource(path) : cachedLivePreviewSource(path);
 }
 
 function cachedMediaSource(path: string) {
