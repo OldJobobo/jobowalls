@@ -1,0 +1,63 @@
+# Maintainer: oldjobobo <oldjobobo@users.noreply.github.com>
+pkgname=jobowalls-git
+pkgver=0.1.0.r0.g0000000
+pkgrel=1
+pkgdesc='Rust wallpaper orchestrator and Tauri film-roll picker for Hyprland'
+arch=('x86_64')
+url='https://github.com/oldjobobo/jobowalls'
+license=('MIT')
+depends=(
+  'gtk3'
+  'webkit2gtk-4.1'
+)
+makedepends=(
+  'cargo'
+  'git'
+  'npm'
+  'nodejs'
+)
+optdepends=(
+  'hyprpaper: static wallpaper backend'
+  'mpvpaper: live/video wallpaper backend'
+  'awww: optional static image transitions'
+  'ffmpeg: animated live wallpaper previews in jobowalls-gui'
+  'ffmpegthumbnailer: faster live wallpaper poster previews in jobowalls-gui'
+)
+provides=('jobowalls')
+conflicts=('jobowalls')
+source=("${pkgname}::git+${url}.git")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "$srcdir/$pkgname"
+  git describe --long --tags --always 2>/dev/null |
+    sed 's/^v//;s/-/.r/;s/-/./'
+}
+
+prepare() {
+  cd "$srcdir/$pkgname"
+  npm --prefix gui ci
+}
+
+build() {
+  cd "$srcdir/$pkgname"
+  cargo build --release --locked
+  npm --prefix gui run build
+  cargo build --release --locked --manifest-path gui/src-tauri/Cargo.toml
+}
+
+check() {
+  cd "$srcdir/$pkgname"
+  cargo test --locked
+  npm --prefix gui run typecheck
+  cargo check --release --locked --manifest-path gui/src-tauri/Cargo.toml
+}
+
+package() {
+  cd "$srcdir/$pkgname"
+  install -Dm755 target/release/jobowalls "$pkgdir/usr/bin/jobowalls"
+  install -Dm755 gui/src-tauri/target/release/jobowalls-gui "$pkgdir/usr/bin/jobowalls-gui"
+  install -Dm644 packaging/linux/dev.jobowalls.picker.desktop \
+    "$pkgdir/usr/share/applications/dev.jobowalls.picker.desktop"
+}
+

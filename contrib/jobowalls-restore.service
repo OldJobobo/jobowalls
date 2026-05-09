@@ -1,0 +1,10 @@
+[Unit]
+Description=Restore jobowalls wallpaper state
+After=graphical-session.target
+
+[Service]
+Type=oneshot
+ExecStart=jobowalls restore
+
+[Install]
+WantedBy=default.target

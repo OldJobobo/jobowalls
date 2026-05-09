@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=jobowalls Picker
+Comment=Visual wallpaper picker for jobowalls
+Exec=jobowalls-gui
+Terminal=false
+Categories=Utility;Settings;DesktopSettings;
+StartupNotify=false
+StartupWMClass=jobowalls-picker
+
