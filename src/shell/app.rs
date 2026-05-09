@@ -128,6 +128,8 @@ fn build_ui(
         .title("JoboWalls Shell")
         .default_width(args.width)
         .default_height(args.height)
+        .focusable(true)
+        .focus_on_click(true)
         .resizable(false)
         .build();
     window.add_css_class("shell-window");
@@ -145,6 +147,7 @@ fn build_ui(
     install_pointer_controls(&window, state.clone());
     schedule_desktop_preview(&state);
     window.present();
+    window.present_with_time(0);
     Ok(())
 }
 

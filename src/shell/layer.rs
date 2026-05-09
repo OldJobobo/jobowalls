@@ -18,7 +18,7 @@ pub fn configure(window: &gtk::ApplicationWindow, args: &ShellArgs) {
     window.set_namespace(Some("jobowalls-shell"));
     window.set_layer(Layer::Overlay);
     window.set_exclusive_zone(0);
-    window.set_keyboard_mode(KeyboardMode::OnDemand);
+    window.set_keyboard_mode(KeyboardMode::Exclusive);
     window.set_anchor(Edge::Bottom, true);
     window.set_margin(Edge::Bottom, 48);
 
