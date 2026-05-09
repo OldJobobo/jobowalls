@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_SOURCE="${BASH_SOURCE[0]-}"
+if [[ -n "$SCRIPT_SOURCE" && -f "$SCRIPT_SOURCE" ]]; then
+  ROOT_DIR="$(cd "$(dirname "$SCRIPT_SOURCE")" && pwd)"
+else
+  ROOT_DIR="$(pwd)"
+fi
 REPO_URL="${REPO_URL:-https://github.com/OldJobobo/jobowalls.git}"
 PREFIX="${PREFIX:-"$HOME/.local"}"
 BINDIR="${BINDIR:-"$PREFIX/bin"}"
