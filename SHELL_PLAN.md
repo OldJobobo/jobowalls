@@ -398,22 +398,20 @@ avi
 
 MVP preview policy:
 
+- Thumbnail cards are always static.
 - Static images use GTK-loadable thumbnail files.
 - Every live wallpaper gets a generated poster thumbnail.
-- All non-selected carousel items use poster previews only.
-- The selected live wallpaper starts by showing its poster preview immediately.
-- The selected live wallpaper upgrades to an animated live preview when the
-  cached/generated animation is ready.
-- Only the selected live wallpaper may animate.
-- Animated live preview generation should prewarm the immediate previous and
-  next live wallpapers after the selected item has a preview job queued.
-- When selection changes, the newly selected live wallpaper follows the same
-  poster-first, live-preview-second flow.
+- Live preview means applying the selected wallpaper to the actual desktop
+  background while browsing.
+- Desktop live preview is debounced so fast scrolling does not spawn a backend
+  command for every intermediate card.
+- `Enter` keeps the currently previewed wallpaper and closes.
+- `Escape` restores the original wallpaper when a live desktop preview changed
+  it, then closes.
 
-Reasoning: shell picker must appear fast. The full Tauri picker can spend more
-time on richer animated previews; the shell picker should prioritize instant
-response by using cheap posters throughout the strip and animating only the
-focused item.
+Reasoning: shell picker must appear fast, and the desktop itself is the preview
+surface. Thumbnail cards should stay stable and cheap while static and live
+wallpapers are previewed through the real backend path.
 
 ## Preview Cache
 
@@ -428,14 +426,12 @@ Add shell-specific cache variants only when dimensions differ:
 ```text
 shell-static-v1.jpg
 shell-poster-v1.jpg
-shell-selected-live-v1.webp
 ```
 
 MVP shell thumbnail profile:
 
 ```text
 Static/poster thumbnail: 1080px wide
-Selected animated live preview: 1080px wide, 16fps, <= 3s
 Neighbor previews: same poster cache, rendered smaller
 ```
 
@@ -447,9 +443,8 @@ Cache key should include:
 - preview profile/version
 
 Do not block the UI thread during thumbnail generation. Show a stable placeholder
-and swap in the preview when ready. Queue preview work in priority order:
-selected poster, selected animated preview, immediate neighbor posters, then
-immediate neighbor animated preview prewarm.
+and swap in the poster when ready. Queue preview work in priority order:
+selected poster, then immediate neighbor posters.
 
 ## Applying Wallpapers
 
@@ -524,13 +519,10 @@ width = 640
 height = 170
 bottom_margin = 48
 close_after_apply = true
-animate_live_selected = true
+live_desktop_preview = true
 
 [shell.preview]
 static_width = 1080
-animated_width = 1080
-animated_fps = 16
-animated_duration = 3.0
 ```
 
 Config must never be required for the default Omarchy use case.
@@ -667,24 +659,23 @@ Exit criteria:
 - Reuse existing cache directory.
 - Show placeholders while generating.
 - Use live posters for video wallpapers.
-- Generate animated live previews for the selected live wallpaper.
-- Keep non-selected live wallpapers on poster thumbnails.
+- Keep all thumbnail cards static.
 - Avoid loading full-resolution images directly into tiny widgets.
 
 Exit criteria:
 
 - Large wallpaper folders remain responsive.
 - Video wallpapers show poster thumbnails.
-- Selected video wallpaper upgrades to animated preview when ready.
 - Reopening is fast after cache generation.
 
 ### Phase 6: Apply Flow
 
-- Apply selected wallpaper through existing set behavior.
-- Show applying state.
-- Close after successful apply.
+- Debounce selection changes and apply the selected wallpaper to the desktop
+  through existing set behavior.
+- Show compact preview/applying state only when useful.
+- `Enter` keeps the current live desktop preview and closes.
+- `Escape` restores the original wallpaper if browsing changed it, then closes.
 - Keep open and show compact error state on failure.
-- Refresh active state after apply if not closing.
 
 Exit criteria:
 
@@ -776,10 +767,9 @@ Resolved decisions:
 - `jobowalls-shell` lives in the main Cargo package as a new binary target.
 - Applying wallpapers spawns the installed `jobowalls` binary for MVP
   simplicity.
-- Live animated previews are included in the shell MVP.
-- Live preview profile is 1080px wide, 16fps, and no longer than 3 seconds.
-- Immediate neighbor live preview prewarming is included in the shell MVP, but
-  neighbors still render as posters until selected.
+- Live desktop preview is included in the shell MVP: selected wallpapers are
+  applied to the actual desktop while browsing.
+- Thumbnail cards remain static; live wallpapers use poster thumbnails.
 - Shell UI state uses `shell.json`, separate from backend runtime state.
 - The installer prompts before installing `mpvpaper`, shows
   `omarchy pkg aur add mpvpaper`, and prints that command again if skipped.
@@ -798,11 +788,12 @@ For the first implementation:
 
 - Main Cargo package, new `src/bin/jobowalls-shell.rs`.
 - Relm4 + GTK4 + `gtk4-layer-shell`.
-- Three visible items only.
-- Live animated preview for the selected item.
-- Poster previews for non-selected neighbors.
-- Apply by spawning the installed `jobowalls` binary with structured arguments.
-- Close after successful apply.
+- Five visible rolling carousel items.
+- Static thumbnail cards for both static and live wallpapers.
+- Live desktop preview by spawning the installed `jobowalls` binary with
+  structured arguments after debounced selection changes.
+- `Enter` keeps the previewed wallpaper and closes.
+- `Escape` restores the original wallpaper and closes.
 - `--debug-window` for normal-window development.
 - Optional installer keybind setup prompt.
 

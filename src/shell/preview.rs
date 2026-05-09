@@ -226,7 +226,7 @@ mod tests {
     use crate::{media::MediaKind, shell::model::WallpaperItem};
 
     #[test]
-    fn queues_selected_live_preview_before_neighbor_prewarm() {
+    fn queues_only_static_posters_when_animation_is_disabled() {
         let items = vec![
             WallpaperItem {
                 path: "/tmp/a.mp4".into(),
@@ -242,9 +242,7 @@ mod tests {
             },
         ];
 
-        let jobs = prioritized_jobs(&items, 0, PreviewProfile::default(), true);
-        assert_eq!(jobs[0].kind, PreviewKind::Poster);
-        assert_eq!(jobs[1].kind, PreviewKind::Animated);
-        assert_eq!(jobs.last().map(|job| job.kind), Some(PreviewKind::Animated));
+        let jobs = prioritized_jobs(&items, 0, PreviewProfile::default(), false);
+        assert!(jobs.iter().all(|job| job.kind == PreviewKind::Poster));
     }
 }

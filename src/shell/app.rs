@@ -19,12 +19,14 @@ use std::{
     collections::HashSet,
     path::PathBuf,
     rc::Rc,
-    sync::mpsc::{self, Sender},
+    sync::mpsc::{self, Receiver, Sender},
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 const NAV_ANIMATION_FRAMES: u8 = 10;
+const DESKTOP_PREVIEW_DEBOUNCE_MS: u64 = 120;
+
 pub fn run() -> Result<()> {
     let args = ShellArgs::parse();
     let shell_state_path = shell_state_path();
@@ -35,18 +37,25 @@ pub fn run() -> Result<()> {
     let active_wallpaper =
         State::load(&runtime_state_path())?.map(|state| PathBuf::from(state.wallpaper));
     let (preview_tx, preview_rx) = mpsc::channel();
+    let (desktop_request_tx, desktop_request_rx) = mpsc::channel();
+    let (desktop_result_tx, desktop_result_rx) = mpsc::channel();
+    spawn_desktop_preview_worker(desktop_request_rx, desktop_result_tx);
 
     let app_state = Rc::new(RefCell::new(AppState {
         args,
         folder,
         items,
         selected,
-        active_wallpaper,
+        active_wallpaper: active_wallpaper.clone(),
+        original_wallpaper: active_wallpaper.clone(),
+        current_preview_wallpaper: active_wallpaper,
         shell_state,
         shell_state_path,
         status: None,
         queued_previews: HashSet::new(),
         preview_tx,
+        desktop_request_tx,
+        desktop_preview_generation: 0,
         animation_frame: 0,
         animation_direction: 1,
         previous_selected: None,
@@ -56,10 +65,12 @@ pub fn run() -> Result<()> {
         .application_id("dev.jobowalls.shell")
         .build();
     let preview_rx = Rc::new(RefCell::new(Some(preview_rx)));
+    let desktop_result_rx = Rc::new(RefCell::new(Some(desktop_result_rx)));
 
     app.connect_activate(move |app| {
         let preview_rx = preview_rx.borrow_mut().take();
-        if let Err(error) = build_ui(app, app_state.clone(), preview_rx) {
+        let desktop_result_rx = desktop_result_rx.borrow_mut().take();
+        if let Err(error) = build_ui(app, app_state.clone(), preview_rx, desktop_result_rx) {
             eprintln!("{error:#}");
             app.quit();
         }
@@ -75,20 +86,39 @@ struct AppState {
     items: Vec<WallpaperItem>,
     selected: usize,
     active_wallpaper: Option<PathBuf>,
+    original_wallpaper: Option<PathBuf>,
+    current_preview_wallpaper: Option<PathBuf>,
     shell_state: ShellState,
     shell_state_path: PathBuf,
     status: Option<String>,
     queued_previews: HashSet<PathBuf>,
     preview_tx: Sender<()>,
+    desktop_request_tx: Sender<DesktopPreviewRequest>,
+    desktop_preview_generation: u64,
     animation_frame: u8,
     animation_direction: isize,
     previous_selected: Option<usize>,
+}
+
+#[derive(Debug, Clone)]
+struct DesktopPreviewRequest {
+    path: PathBuf,
+    monitor: String,
+    generation: u64,
+}
+
+#[derive(Debug)]
+struct DesktopPreviewResult {
+    path: PathBuf,
+    generation: u64,
+    result: std::result::Result<(), String>,
 }
 
 fn build_ui(
     app: &gtk::Application,
     state: Rc<RefCell<AppState>>,
     preview_rx: Option<mpsc::Receiver<()>>,
+    desktop_result_rx: Option<mpsc::Receiver<DesktopPreviewResult>>,
 ) -> Result<()> {
     load_css();
 
@@ -107,9 +137,13 @@ fn build_ui(
     if let Some(preview_rx) = preview_rx {
         install_preview_poll(&window, state.clone(), preview_rx);
     }
+    if let Some(desktop_result_rx) = desktop_result_rx {
+        install_desktop_preview_poll(&window, state.clone(), desktop_result_rx);
+    }
     install_animation_tick(&window, state.clone());
     install_keys(&window, state.clone());
-    install_pointer_controls(&window, state);
+    install_pointer_controls(&window, state.clone());
+    schedule_desktop_preview(&state);
     window.present();
     Ok(())
 }
@@ -129,7 +163,7 @@ fn render(window: &gtk::ApplicationWindow, state: Rc<RefCell<AppState>>) {
             &state_ref.items,
             state_ref.selected,
             state_ref.active_wallpaper.as_deref(),
-            !state_ref.args.no_live_preview,
+            false,
             state_ref.previous_selected,
             animation_progress(&state_ref),
             state_ref.animation_direction,
@@ -152,7 +186,7 @@ fn queue_preview_jobs(state: &mut AppState) {
         &state.items,
         state.selected,
         PreviewProfile::default(),
-        !state.args.no_live_preview,
+        false,
     );
 
     for job in jobs {
@@ -166,6 +200,33 @@ fn queue_preview_jobs(state: &mut AppState) {
             let _ = tx.send(());
         });
     }
+}
+
+fn spawn_desktop_preview_worker(
+    request_rx: Receiver<DesktopPreviewRequest>,
+    result_tx: Sender<DesktopPreviewResult>,
+) {
+    thread::spawn(move || {
+        while let Ok(mut request) = request_rx.recv() {
+            while let Ok(next) =
+                request_rx.recv_timeout(Duration::from_millis(DESKTOP_PREVIEW_DEBOUNCE_MS))
+            {
+                request = next;
+            }
+
+            let result = apply_wallpaper(&request.path, &request.monitor).map_err(|error| {
+                format!(
+                    "desktop preview failed for {}: {error}",
+                    request.path.display()
+                )
+            });
+            let _ = result_tx.send(DesktopPreviewResult {
+                path: request.path,
+                generation: request.generation,
+                result,
+            });
+        }
+    });
 }
 
 fn animation_progress(state: &AppState) -> f64 {
@@ -187,6 +248,43 @@ fn install_preview_poll(
         let mut changed = false;
         while preview_rx.try_recv().is_ok() {
             changed = true;
+        }
+
+        if changed {
+            render(&window, state.clone());
+        }
+
+        glib::ControlFlow::Continue
+    });
+}
+
+fn install_desktop_preview_poll(
+    window: &gtk::ApplicationWindow,
+    state: Rc<RefCell<AppState>>,
+    desktop_result_rx: mpsc::Receiver<DesktopPreviewResult>,
+) {
+    let window = window.clone();
+    glib::timeout_add_local(Duration::from_millis(80), move || {
+        let mut changed = false;
+        while let Ok(result) = desktop_result_rx.try_recv() {
+            let mut state = state.borrow_mut();
+            if result.generation != state.desktop_preview_generation {
+                continue;
+            }
+
+            changed = true;
+            match result.result {
+                Ok(()) => {
+                    state.active_wallpaper = Some(result.path.clone());
+                    state.current_preview_wallpaper = Some(result.path);
+                    if state.status.as_deref() == Some("Previewing...") {
+                        state.status = None;
+                    }
+                }
+                Err(error) => {
+                    state.status = Some(error);
+                }
+            }
         }
 
         if changed {
@@ -226,7 +324,7 @@ fn install_keys(window: &gtk::ApplicationWindow, state: Rc<RefCell<AppState>>) {
     let window_for_keys = window.clone();
     keys.connect_key_pressed(move |_, key, _, _| match key {
         gdk::Key::Escape => {
-            window_for_keys.close();
+            restore_original_and_close(&state, &window_for_keys);
             glib::Propagation::Stop
         }
         gdk::Key::Left | gdk::Key::h | gdk::Key::H => {
@@ -293,8 +391,8 @@ fn install_pointer_controls(window: &gtk::ApplicationWindow, state: Rc<RefCell<A
     window.add_controller(click);
 }
 
-fn move_selection(state: &Rc<RefCell<AppState>>, delta: isize) {
-    let mut state = state.borrow_mut();
+fn move_selection(app_state: &Rc<RefCell<AppState>>, delta: isize) {
+    let mut state = app_state.borrow_mut();
     let len = state.items.len();
     if len == 0 {
         return;
@@ -311,10 +409,12 @@ fn move_selection(state: &Rc<RefCell<AppState>>, delta: isize) {
     let selected = state.selected;
     state.shell_state.remember(&folder, &monitor, selected);
     let _ = state.shell_state.save(&state.shell_state_path);
+    drop(state);
+    schedule_desktop_preview(app_state);
 }
 
-fn shuffle_selection(state: &Rc<RefCell<AppState>>) {
-    let mut state = state.borrow_mut();
+fn shuffle_selection(app_state: &Rc<RefCell<AppState>>) {
+    let mut state = app_state.borrow_mut();
     let len = state.items.len();
     if len <= 1 {
         return;
@@ -336,6 +436,8 @@ fn shuffle_selection(state: &Rc<RefCell<AppState>>) {
     let monitor = state.args.monitor.clone();
     state.shell_state.remember(&folder, &monitor, selected);
     let _ = state.shell_state.save(&state.shell_state_path);
+    drop(state);
+    schedule_desktop_preview(app_state);
 }
 
 fn start_navigation_animation(state: &mut AppState, previous: usize, delta: isize) {
@@ -360,12 +462,68 @@ fn apply_selected(state: &Rc<RefCell<AppState>>, window: &gtk::ApplicationWindow
     render(window, state.clone());
 
     match apply_wallpaper(&path, &monitor) {
-        Ok(()) => window.close(),
+        Ok(()) => {
+            let mut state = state.borrow_mut();
+            state.active_wallpaper = Some(path.clone());
+            state.current_preview_wallpaper = Some(path);
+            state.original_wallpaper = state.current_preview_wallpaper.clone();
+            window.close();
+        }
         Err(error) => {
             state.borrow_mut().status = Some(error.to_string());
             render(window, state.clone());
         }
     }
+}
+
+fn schedule_desktop_preview(state: &Rc<RefCell<AppState>>) {
+    let request = {
+        let mut state = state.borrow_mut();
+        if state.args.no_live_preview {
+            return;
+        }
+
+        let Some(item) = state.items.get(state.selected) else {
+            return;
+        };
+        let path = item.path.clone();
+        if state.current_preview_wallpaper.as_ref() == Some(&path) {
+            return;
+        }
+
+        state.desktop_preview_generation += 1;
+        state.status = Some("Previewing...".to_string());
+        DesktopPreviewRequest {
+            path,
+            monitor: state.args.monitor.clone(),
+            generation: state.desktop_preview_generation,
+        }
+    };
+
+    let _ = state.borrow().desktop_request_tx.send(request);
+}
+
+fn restore_original_and_close(state: &Rc<RefCell<AppState>>, window: &gtk::ApplicationWindow) {
+    let (original, monitor, needs_restore) = {
+        let state = state.borrow();
+        let original = state.original_wallpaper.clone();
+        let needs_restore = original.is_some() && state.current_preview_wallpaper != original;
+        (original, state.args.monitor.clone(), needs_restore)
+    };
+
+    if let Some(original) = original
+        && needs_restore
+    {
+        state.borrow_mut().status = Some("Restoring...".to_string());
+        render(window, state.clone());
+        if let Err(error) = apply_wallpaper(&original, &monitor) {
+            state.borrow_mut().status = Some(format!("restore failed: {error}"));
+            render(window, state.clone());
+            return;
+        }
+    }
+
+    window.close();
 }
 
 fn rescan(state: &Rc<RefCell<AppState>>) {

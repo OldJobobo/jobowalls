@@ -26,7 +26,7 @@ pub struct ShellArgs {
     #[arg(long, default_value_t = 190)]
     pub height: i32,
 
-    /// Disable animated live previews.
+    /// Disable applying the selected wallpaper to the desktop while browsing.
     #[arg(long)]
     pub no_live_preview: bool,
 
