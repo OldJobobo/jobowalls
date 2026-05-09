@@ -58,7 +58,7 @@ stack, including GTK and WebKitGTK.
 One-command install to `~/.local`:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/OldJobobo/jobowalls/master/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/OldJobobo/jobowalls/refs/heads/master/install.sh | bash
 ```
 
 Or clone and install from a checkout:
@@ -82,7 +82,7 @@ Make sure `~/.local/bin` is in your `PATH`.
 To install somewhere else:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/OldJobobo/jobowalls/master/install.sh | PREFIX=/usr/local bash
+curl -fsSL https://raw.githubusercontent.com/OldJobobo/jobowalls/refs/heads/master/install.sh | PREFIX=/usr/local bash
 ```
 
 Or from a checkout:

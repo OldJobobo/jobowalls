@@ -21,7 +21,7 @@ usage() {
 Usage: ./install.sh
 
 Or:
-  curl -fsSL https://raw.githubusercontent.com/OldJobobo/jobowalls/master/install.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/OldJobobo/jobowalls/refs/heads/master/install.sh | bash
 
 Environment:
   REPO_URL Install source when run outside a checkout.
