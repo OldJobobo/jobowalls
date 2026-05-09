@@ -34,8 +34,15 @@ the package/install layout is being prepared for later AUR packaging.
 
 ## Requirements
 
-Core build requirements:
+Normal install requirements:
 
+- `curl`
+- `tar`
+
+Source build requirements, only needed when `BUILD_FROM_SOURCE=1` or when no
+release binary is available:
+
+- `git`
 - Rust/Cargo
 - Node.js and npm, for the GUI
 
@@ -61,7 +68,10 @@ One-command install to `~/.local`:
 curl -fsSL https://raw.githubusercontent.com/OldJobobo/jobowalls/refs/heads/master/install.sh | bash
 ```
 
-Or clone and install from a checkout:
+The installer downloads the latest precompiled Linux x86_64 release by default.
+If no release binary is available, it falls back to building from source.
+
+Or clone and run the installer from a checkout:
 
 ```bash
 git clone https://github.com/OldJobobo/jobowalls.git
@@ -85,7 +95,19 @@ To install somewhere else:
 curl -fsSL https://raw.githubusercontent.com/OldJobobo/jobowalls/refs/heads/master/install.sh | PREFIX=/usr/local bash
 ```
 
+To force a source build:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/OldJobobo/jobowalls/refs/heads/master/install.sh | BUILD_FROM_SOURCE=1 bash
+```
+
 Or from a checkout:
+
+```bash
+BUILD_FROM_SOURCE=1 ./install.sh
+```
+
+To install to a custom prefix from a checkout:
 
 ```bash
 PREFIX=/usr/local ./install.sh
