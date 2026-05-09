@@ -405,6 +405,8 @@ MVP preview policy:
 - The selected live wallpaper upgrades to an animated live preview when the
   cached/generated animation is ready.
 - Only the selected live wallpaper may animate.
+- Animated live preview generation should prewarm the immediate previous and
+  next live wallpapers after the selected item has a preview job queued.
 - When selection changes, the newly selected live wallpaper follows the same
   poster-first, live-preview-second flow.
 
@@ -429,11 +431,11 @@ shell-poster-v1.jpg
 shell-selected-live-v1.webp
 ```
 
-Suggested shell thumbnail sizes:
+MVP shell thumbnail profile:
 
 ```text
-Static/poster thumbnail: 720px wide
-Selected animated live preview: 720px wide, 8fps, <= 1s
+Static/poster thumbnail: 1080px wide
+Selected animated live preview: 1080px wide, 16fps, <= 3s
 Neighbor previews: same poster cache, rendered smaller
 ```
 
@@ -445,7 +447,9 @@ Cache key should include:
 - preview profile/version
 
 Do not block the UI thread during thumbnail generation. Show a stable placeholder
-and swap in the preview when ready.
+and swap in the preview when ready. Queue preview work in priority order:
+selected poster, selected animated preview, immediate neighbor posters, then
+immediate neighbor animated preview prewarm.
 
 ## Applying Wallpapers
 
@@ -520,13 +524,13 @@ width = 640
 height = 170
 bottom_margin = 48
 close_after_apply = true
-animate_live_selected = false
+animate_live_selected = true
 
 [shell.preview]
-static_width = 720
-animated_width = 720
-animated_fps = 8
-animated_duration = 1.0
+static_width = 1080
+animated_width = 1080
+animated_fps = 16
+animated_duration = 3.0
 ```
 
 Config must never be required for the default Omarchy use case.
@@ -570,6 +574,7 @@ Runtime dependencies for shell:
 gtk4
 gtk4-layer-shell
 ffmpeg or ffmpegthumbnailer for generated previews
+mpvpaper for live/video wallpapers
 ```
 
 Arch/Omarchy package dependency names should be verified before release work.
@@ -580,6 +585,12 @@ The installer should:
 - Not fail older releases that do not include it.
 - Print a dependency hint if GTK/layer-shell libs are missing.
 - Avoid compiling from source for normal curl installs when binaries exist.
+- Prompt before installing the `mpvpaper` live wallpaper prerequisite.
+- Show the exact Omarchy command before prompting:
+  `omarchy pkg aur add mpvpaper`.
+- Install `mpvpaper` only after explicit opt-in.
+- If the user skips, explain that live wallpapers require `mpvpaper` and print
+  the same command to run later.
 - Offer an optional Hyprland keybind setup prompt for
   `SUPER CTRL ALT, SPACE -> jobowalls-shell`.
 - Make the keybind prompt opt-in and avoid overwriting an existing binding
@@ -656,12 +667,15 @@ Exit criteria:
 - Reuse existing cache directory.
 - Show placeholders while generating.
 - Use live posters for video wallpapers.
+- Generate animated live previews for the selected live wallpaper.
+- Keep non-selected live wallpapers on poster thumbnails.
 - Avoid loading full-resolution images directly into tiny widgets.
 
 Exit criteria:
 
 - Large wallpaper folders remain responsive.
 - Video wallpapers show poster thumbnails.
+- Selected video wallpaper upgrades to animated preview when ready.
 - Reopening is fast after cache generation.
 
 ### Phase 6: Apply Flow
@@ -763,16 +777,20 @@ Resolved decisions:
 - Applying wallpapers spawns the installed `jobowalls` binary for MVP
   simplicity.
 - Live animated previews are included in the shell MVP.
+- Live preview profile is 1080px wide, 16fps, and no longer than 3 seconds.
+- Immediate neighbor live preview prewarming is included in the shell MVP, but
+  neighbors still render as posters until selected.
 - Shell UI state uses `shell.json`, separate from backend runtime state.
+- The installer prompts before installing `mpvpaper`, shows
+  `omarchy pkg aur add mpvpaper`, and prints that command again if skipped.
 - The installer should offer an optional Hyprland keybind setup prompt.
+- Installer keybind setup should offer `SUPER+CTRL+ALT+SPACE` for
+  `jobowalls-shell` and only write config after explicit opt-in.
 - The overlay exits immediately after successful apply.
 
 Remaining decisions:
 
-- Exact shell thumbnail profile for live previews.
-- Exact prompt wording and safety behavior for installer keybind setup.
-- Whether live preview generation should start only for selected items or also
-  prewarm immediate neighbors.
+- None.
 
 ## Recommended MVP Decision Set
 

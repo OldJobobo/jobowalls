@@ -1,0 +1,55 @@
+.shell-root {
+  background: rgba(20, 22, 24, 0.76);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  padding: 14px 18px;
+}
+
+.carousel {
+  min-width: 560px;
+  min-height: 136px;
+}
+
+.thumb {
+  background: rgba(7, 9, 11, 0.64);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  color: #ece8df;
+  overflow: hidden;
+}
+
+.thumb picture {
+  min-width: 100%;
+  min-height: 100%;
+}
+
+.neighbor {
+  opacity: 0.68;
+}
+
+.selected {
+  border-color: #d8a74f;
+  opacity: 1;
+}
+
+.active {
+  border-color: #75c7a1;
+}
+
+.live-label {
+  font-weight: 700;
+  letter-spacing: 0;
+  margin-top: 44px;
+}
+
+.status {
+  color: #f0c36a;
+  font-size: 12px;
+  max-width: 520px;
+}
+
+.empty {
+  color: #ece8df;
+  min-width: 520px;
+  min-height: 96px;
+}

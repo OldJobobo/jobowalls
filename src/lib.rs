@@ -5,6 +5,7 @@ pub mod config;
 pub mod media;
 pub mod monitors;
 pub mod orchestrator;
+pub mod shell;
 pub mod state;
 
 pub mod backends {

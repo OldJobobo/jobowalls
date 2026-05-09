@@ -7,6 +7,8 @@ arch=('x86_64')
 url='https://github.com/oldjobobo/jobowalls'
 license=('MIT')
 depends=(
+  'gtk4'
+  'gtk4-layer-shell'
   'gtk3'
   'webkit2gtk-4.1'
 )
@@ -20,8 +22,8 @@ optdepends=(
   'hyprpaper: static wallpaper backend'
   'mpvpaper: live/video wallpaper backend'
   'awww: optional static image transitions'
-  'ffmpeg: animated live wallpaper previews in jobowalls-gui'
-  'ffmpegthumbnailer: faster live wallpaper poster previews in jobowalls-gui'
+  'ffmpeg: animated live wallpaper previews in jobowalls-gui and jobowalls-shell'
+  'ffmpegthumbnailer: faster live wallpaper poster previews'
 )
 provides=('jobowalls')
 conflicts=('jobowalls')
@@ -55,6 +57,7 @@ check() {
 package() {
   cd "$srcdir/$pkgname"
   install -Dm755 target/release/jobowalls "$pkgdir/usr/bin/jobowalls"
+  install -Dm755 target/release/jobowalls-shell "$pkgdir/usr/bin/jobowalls-shell"
   install -Dm755 gui/src-tauri/target/release/jobowalls-gui "$pkgdir/usr/bin/jobowalls-gui-bin"
   install -Dm755 packaging/linux/jobowalls-gui "$pkgdir/usr/bin/jobowalls-gui"
   install -Dm644 packaging/linux/dev.jobowalls.picker.desktop \

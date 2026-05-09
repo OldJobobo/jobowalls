@@ -41,6 +41,7 @@ Environment:
 Installs:
   \$BINDIR/jobowalls
   \$BINDIR/jobowalls-gui
+  \$BINDIR/jobowalls-shell
   \$APPDIR/dev.jobowalls.picker.desktop
 EOF
 }
@@ -70,6 +71,7 @@ If an earlier install created root-owned files, remove or chown these paths:
   $BINDIR/jobowalls
   $BINDIR/jobowalls-gui
   $BINDIR/jobowalls-gui-bin
+  $BINDIR/jobowalls-shell
   $APPDIR/dev.jobowalls.picker.desktop
 
 You can also install somewhere else with:
@@ -173,14 +175,43 @@ ensure_user_path() {
 }
 
 install_optional_backends() {
-  if command -v omarchy >/dev/null 2>&1; then
-    echo "installing live wallpaper backend with Omarchy"
-    if ! omarchy pkg aur add mpvpaper; then
-      echo "warning: failed to install mpvpaper through Omarchy; live wallpapers may not work" >&2
-    fi
-  else
-    echo "omarchy not found; skipping automatic mpvpaper install"
+  if command -v mpvpaper >/dev/null 2>&1; then
+    return
   fi
+
+  local install_command="omarchy pkg aur add mpvpaper"
+  echo "mpvpaper is required for live/video wallpapers."
+
+  if ! command -v omarchy >/dev/null 2>&1; then
+    echo "omarchy not found; skipping mpvpaper install."
+    echo "Install mpvpaper after setup to use live wallpapers."
+    echo "Omarchy command: $install_command"
+    return
+  fi
+
+  if [[ ! -t 0 ]]; then
+    echo "Skipping mpvpaper install because stdin is not interactive."
+    echo "Install mpvpaper after setup to use live wallpapers."
+    echo "Omarchy command: $install_command"
+    return
+  fi
+
+  echo "JoboWalls can install it the Omarchy way:"
+  echo "  $install_command"
+  if ! read -r -p "Install mpvpaper now? [y/N] " answer; then
+    answer=""
+  fi
+  case "$answer" in
+    y|Y|yes|YES)
+      if ! omarchy pkg aur add mpvpaper; then
+        echo "warning: failed to install mpvpaper through Omarchy; live wallpapers may not work" >&2
+      fi
+      ;;
+    *)
+      echo "Skipping mpvpaper install. Live wallpapers need mpvpaper."
+      echo "Run later: $install_command"
+      ;;
+  esac
 }
 
 latest_download_url() {
@@ -237,6 +268,12 @@ install_from_release() {
       return 2
     }
     install_gui_wrapper "$BINDIR/jobowalls-gui" || {
+      rm -rf "$tmpdir"
+      return 2
+    }
+  fi
+  if [[ -x "$tmpdir/bin/jobowalls-shell" ]]; then
+    install_or_permission_error -m 0755 "$tmpdir/bin/jobowalls-shell" "$BINDIR/jobowalls-shell" || {
       rm -rf "$tmpdir"
       return 2
     }
@@ -375,6 +412,7 @@ install_from_source() {
   fi
 
   local cli_bin="$ROOT_DIR/target/$PROFILE/jobowalls"
+  local shell_bin="$ROOT_DIR/target/$PROFILE/jobowalls-shell"
   local gui_bin="$ROOT_DIR/gui/src-tauri/target/$PROFILE/jobowalls-gui"
 
   need cargo
@@ -395,6 +433,9 @@ install_from_source() {
 
   prepare_install_dirs
   install_or_permission_error -m 0755 "$cli_bin" "$BINDIR/jobowalls"
+  if [[ -x "$shell_bin" ]]; then
+    install_or_permission_error -m 0755 "$shell_bin" "$BINDIR/jobowalls-shell"
+  fi
   install_or_permission_error -m 0755 "$gui_bin" "$BINDIR/jobowalls-gui-bin"
   install_gui_wrapper "$BINDIR/jobowalls-gui"
   install_desktop_entry "$ROOT_DIR/packaging/linux/dev.jobowalls.picker.desktop" \
@@ -422,4 +463,7 @@ ensure_user_path
 echo "installed:"
 echo "  $BINDIR/jobowalls"
 echo "  $BINDIR/jobowalls-gui"
+if [[ -x "$BINDIR/jobowalls-shell" ]]; then
+  echo "  $BINDIR/jobowalls-shell"
+fi
 echo "  $APPDIR/dev.jobowalls.picker.desktop"
