@@ -10,11 +10,19 @@ pub fn build(
     selected: usize,
     active_wallpaper: Option<&Path>,
     animate_live: bool,
+    animation_offset: i32,
+    animation_opacity: f64,
 ) -> gtk::Box {
     let root = gtk::Box::new(gtk::Orientation::Horizontal, 16);
     root.add_css_class("carousel");
     root.set_halign(gtk::Align::Center);
     root.set_valign(gtk::Align::Center);
+    root.set_opacity(animation_opacity);
+    if animation_offset > 0 {
+        root.set_margin_start(animation_offset);
+    } else if animation_offset < 0 {
+        root.set_margin_end(animation_offset.abs());
+    }
 
     if items.is_empty() {
         return root;

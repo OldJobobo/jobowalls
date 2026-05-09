@@ -24,6 +24,9 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+const NAV_ANIMATION_FRAMES: u8 = 10;
+const NAV_ANIMATION_OFFSET: f64 = 46.0;
+
 pub fn run() -> Result<()> {
     let args = ShellArgs::parse();
     let shell_state_path = shell_state_path();
@@ -46,6 +49,8 @@ pub fn run() -> Result<()> {
         status: None,
         queued_previews: HashSet::new(),
         preview_tx,
+        animation_frame: 0,
+        animation_direction: 0,
     }));
 
     let app = gtk::Application::builder()
@@ -76,6 +81,8 @@ struct AppState {
     status: Option<String>,
     queued_previews: HashSet<PathBuf>,
     preview_tx: Sender<()>,
+    animation_frame: u8,
+    animation_direction: i32,
 }
 
 fn build_ui(
@@ -100,6 +107,7 @@ fn build_ui(
     if let Some(preview_rx) = preview_rx {
         install_preview_poll(&window, state.clone(), preview_rx);
     }
+    install_animation_tick(&window, state.clone());
     install_keys(&window, state.clone());
     install_pointer_controls(&window, state);
     window.present();
@@ -122,6 +130,8 @@ fn render(window: &gtk::ApplicationWindow, state: Rc<RefCell<AppState>>) {
             state_ref.selected,
             state_ref.active_wallpaper.as_deref(),
             !state_ref.args.no_live_preview,
+            animation_offset(&state_ref),
+            animation_opacity(&state_ref),
         ));
     }
 
@@ -157,6 +167,23 @@ fn queue_preview_jobs(state: &mut AppState) {
     }
 }
 
+fn animation_progress(state: &AppState) -> f64 {
+    f64::from(state.animation_frame) / f64::from(NAV_ANIMATION_FRAMES)
+}
+
+fn animation_offset(state: &AppState) -> i32 {
+    if state.animation_frame == 0 {
+        return 0;
+    }
+
+    let eased = animation_progress(state).powi(2);
+    (f64::from(state.animation_direction) * NAV_ANIMATION_OFFSET * eased).round() as i32
+}
+
+fn animation_opacity(state: &AppState) -> f64 {
+    1.0 - (animation_progress(state) * 0.18)
+}
+
 fn install_preview_poll(
     window: &gtk::ApplicationWindow,
     state: Rc<RefCell<AppState>>,
@@ -170,6 +197,30 @@ fn install_preview_poll(
         }
 
         if changed {
+            render(&window, state.clone());
+        }
+
+        glib::ControlFlow::Continue
+    });
+}
+
+fn install_animation_tick(window: &gtk::ApplicationWindow, state: Rc<RefCell<AppState>>) {
+    let window = window.clone();
+    glib::timeout_add_local(Duration::from_millis(16), move || {
+        let should_render = {
+            let mut state = state.borrow_mut();
+            if state.animation_frame == 0 {
+                false
+            } else {
+                state.animation_frame -= 1;
+                if state.animation_frame == 0 {
+                    state.animation_direction = 0;
+                }
+                true
+            }
+        };
+
+        if should_render {
             render(&window, state.clone());
         }
 
@@ -260,6 +311,7 @@ fn move_selection(state: &Rc<RefCell<AppState>>, delta: isize) {
     } else {
         (state.selected + 1) % len
     };
+    start_navigation_animation(&mut state, delta);
     let folder = state.folder.clone();
     let monitor = state.args.monitor.clone();
     let selected = state.selected;
@@ -283,11 +335,17 @@ fn shuffle_selection(state: &Rc<RefCell<AppState>>) {
         selected = (selected + 1) % len;
     }
     state.selected = selected;
+    start_navigation_animation(&mut state, 1);
 
     let folder = state.folder.clone();
     let monitor = state.args.monitor.clone();
     state.shell_state.remember(&folder, &monitor, selected);
     let _ = state.shell_state.save(&state.shell_state_path);
+}
+
+fn start_navigation_animation(state: &mut AppState, delta: isize) {
+    state.animation_frame = NAV_ANIMATION_FRAMES;
+    state.animation_direction = if delta < 0 { -1 } else { 1 };
 }
 
 fn apply_selected(state: &Rc<RefCell<AppState>>, window: &gtk::ApplicationWindow) {
