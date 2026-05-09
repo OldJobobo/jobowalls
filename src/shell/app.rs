@@ -61,7 +61,7 @@ pub fn run() -> Result<()> {
         }
     });
 
-    app.run();
+    app.run_with_args(&["jobowalls-shell"]);
     Ok(())
 }
 
