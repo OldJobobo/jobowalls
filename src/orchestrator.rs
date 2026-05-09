@@ -4,6 +4,7 @@ use crate::{
         hyprpaper::HyprpaperBackend,
         model::{Backend, BackendOverride, WallpaperBackend},
         mpvpaper::MpvpaperBackend,
+        swaybg::SwaybgBackend,
     },
     config::Config,
     media::{MediaKind, classify_path},
@@ -89,6 +90,7 @@ fn backend_adapter(backend: Backend) -> &'static dyn WallpaperBackend {
         Backend::Hyprpaper => &HyprpaperBackend,
         Backend::Mpvpaper => &MpvpaperBackend,
         Backend::Awww => &AwwwBackend,
+        Backend::Swaybg => &SwaybgBackend,
     }
 }
 

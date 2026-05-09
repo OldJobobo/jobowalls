@@ -8,6 +8,7 @@ pub enum Backend {
     Hyprpaper,
     Mpvpaper,
     Awww,
+    Swaybg,
 }
 
 impl fmt::Display for Backend {
@@ -16,6 +17,7 @@ impl fmt::Display for Backend {
             Backend::Hyprpaper => write!(f, "hyprpaper"),
             Backend::Mpvpaper => write!(f, "mpvpaper"),
             Backend::Awww => write!(f, "awww"),
+            Backend::Swaybg => write!(f, "swaybg"),
         }
     }
 }

@@ -203,6 +203,28 @@ impl State {
         self.updated_at = OffsetDateTime::now_local().unwrap_or_else(|_| OffsetDateTime::now_utc());
     }
 
+    pub fn clear_backend_pids_for_monitors(&mut self, backend: Backend, monitors: &[String]) {
+        if monitors.iter().any(|monitor| monitor == "all") {
+            for monitor in self.monitors.values_mut() {
+                if monitor.backend == backend {
+                    monitor.pid = None;
+                }
+            }
+            self.updated_at =
+                OffsetDateTime::now_local().unwrap_or_else(|_| OffsetDateTime::now_utc());
+            return;
+        }
+
+        for monitor in monitors {
+            if let Some(state) = self.monitors.get_mut(monitor)
+                && state.backend == backend
+            {
+                state.pid = None;
+            }
+        }
+        self.updated_at = OffsetDateTime::now_local().unwrap_or_else(|_| OffsetDateTime::now_utc());
+    }
+
     pub fn record_last_command(&mut self, command: impl Into<String>) {
         self.last_command = Some(command.into());
         self.updated_at = OffsetDateTime::now_local().unwrap_or_else(|_| OffsetDateTime::now_utc());

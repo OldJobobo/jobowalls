@@ -2,7 +2,7 @@ use crate::{
     backends::{
         awww, hyprpaper,
         model::{Backend, BackendOverride, WallpaperBackend},
-        mpvpaper,
+        mpvpaper, swaybg,
     },
     collection::{
         scan_collection, select_next_persistent, select_previous_persistent,
@@ -110,6 +110,7 @@ enum BackendArg {
     Hyprpaper,
     Mpvpaper,
     Awww,
+    Swaybg,
 }
 
 impl From<BackendArg> for BackendOverride {
@@ -119,6 +120,7 @@ impl From<BackendArg> for BackendOverride {
             BackendArg::Hyprpaper => BackendOverride::Backend(Backend::Hyprpaper),
             BackendArg::Mpvpaper => BackendOverride::Backend(Backend::Mpvpaper),
             BackendArg::Awww => BackendOverride::Backend(Backend::Awww),
+            BackendArg::Swaybg => BackendOverride::Backend(Backend::Swaybg),
         }
     }
 }
@@ -394,6 +396,11 @@ fn print_doctor(paths: &RuntimePaths, config: &Config) {
         backend_adapter(Backend::Awww).is_available()
     );
     println!(
+        "{} available: {}",
+        backend_adapter(Backend::Swaybg).name(),
+        backend_adapter(Backend::Swaybg).is_available()
+    );
+    println!(
         "awww-daemon available: {}",
         command_available("awww-daemon")
     );
@@ -488,6 +495,7 @@ fn execute_set_plan(plan: &SetPlan, config: &Config, state_path: &std::path::Pat
             } else {
                 vec![plan.monitor.clone()]
             };
+            stop_owned_swaybg_for_monitors(state_path, &target_monitor_names(plan, &monitors)?)?;
             if let Some(pid) = ensure_hyprpaper_daemon()? {
                 println!("started hyprpaper with pid {pid}");
             }
@@ -515,6 +523,7 @@ fn execute_set_plan(plan: &SetPlan, config: &Config, state_path: &std::path::Pat
                 .iter()
                 .map(|plan| plan.monitor.clone())
                 .collect::<Vec<_>>();
+            stop_owned_swaybg_for_monitors(state_path, &target_monitors)?;
             let previous_live_pids = existing_state
                 .as_ref()
                 .map(|state| owned_live_pids_for_monitors(state, &target_monitors))
@@ -546,6 +555,7 @@ fn execute_set_plan(plan: &SetPlan, config: &Config, state_path: &std::path::Pat
                 vec![plan.monitor.clone()]
             };
             let target_monitors = target_monitor_names(plan, &monitors)?;
+            stop_owned_swaybg_for_monitors(state_path, &target_monitors)?;
             let live_to_static = existing_state
                 .as_ref()
                 .map(|state| !owned_live_pids_for_monitors(state, &target_monitors).is_empty())
@@ -561,6 +571,32 @@ fn execute_set_plan(plan: &SetPlan, config: &Config, state_path: &std::path::Pat
                 existing_state.as_ref(),
                 plan,
                 static_entries(plan, &monitors),
+            );
+            state.collections = existing_collections;
+            state.record_last_command(last_set_command(plan));
+            state.save(state_path)?;
+            println!(
+                "set {} on {} using {}",
+                plan.wallpaper.display(),
+                plan.monitor,
+                plan.backend
+            );
+        }
+        Backend::Swaybg => {
+            let monitors = if plan.monitor == "all" {
+                monitors::names()?
+            } else {
+                vec![plan.monitor.clone()]
+            };
+            let target_monitors = target_monitor_names(plan, &monitors)?;
+            stop_owned_swaybg_for_monitors(state_path, &target_monitors)?;
+            stop_owned_live_for_monitors(state_path, &target_monitors)?;
+
+            let pid = swaybg::start_command(plan).spawn_detached()?;
+            let mut state = State::merged_with_monitor_entries(
+                existing_state.as_ref(),
+                plan,
+                static_entries_with_pid(plan, &monitors, Some(pid)),
             );
             state.collections = existing_collections;
             state.record_last_command(last_set_command(plan));
@@ -621,6 +657,27 @@ fn owned_live_pids_for_monitors(state: &State, monitors: &[String]) -> Vec<u32> 
         .filter(|monitor| monitor.backend == Backend::Mpvpaper)
         .filter_map(|monitor| monitor.pid)
         .collect()
+}
+
+fn owned_swaybg_pids_for_monitors(state: &State, monitors: &[String]) -> Vec<u32> {
+    let mut pids = if monitors.iter().any(|monitor| monitor == "all") {
+        state
+            .monitors
+            .values()
+            .filter(|monitor| monitor.backend == Backend::Swaybg)
+            .filter_map(|monitor| monitor.pid)
+            .collect::<Vec<_>>()
+    } else {
+        monitors
+            .iter()
+            .filter_map(|monitor| state.monitors.get(monitor))
+            .filter(|monitor| monitor.backend == Backend::Swaybg)
+            .filter_map(|monitor| monitor.pid)
+            .collect::<Vec<_>>()
+    };
+    pids.sort_unstable();
+    pids.dedup();
+    pids
 }
 
 fn terminate_pids(pids: &[u32]) -> Result<usize> {
@@ -752,6 +809,7 @@ fn restore_profile_plans_for_monitors(
             BackendPreference::Hyprpaper => BackendArg::Hyprpaper,
             BackendPreference::Mpvpaper => BackendArg::Mpvpaper,
             BackendPreference::Awww => BackendArg::Awww,
+            BackendPreference::Swaybg => BackendArg::Swaybg,
         };
         plans.push(plan_set(config, &path, Some(monitor), backend.into())?);
     }
@@ -803,14 +861,22 @@ fn target_monitor_names(plan: &SetPlan, expanded_monitors: &[String]) -> Result<
 }
 
 fn static_entries(plan: &SetPlan, expanded_monitors: &[String]) -> Vec<(String, Option<u32>)> {
+    static_entries_with_pid(plan, expanded_monitors, None)
+}
+
+fn static_entries_with_pid(
+    plan: &SetPlan,
+    expanded_monitors: &[String],
+    pid: Option<u32>,
+) -> Vec<(String, Option<u32>)> {
     if plan.monitor == "all" {
         return expanded_monitors
             .iter()
-            .map(|monitor| (monitor.clone(), None))
+            .map(|monitor| (monitor.clone(), pid))
             .collect();
     }
 
-    vec![(plan.monitor.clone(), None)]
+    vec![(plan.monitor.clone(), pid)]
 }
 
 #[derive(Debug)]
@@ -1021,6 +1087,22 @@ fn stop_owned_live_for_monitors(
     Ok(stopped)
 }
 
+fn stop_owned_swaybg_for_monitors(
+    state_path: &std::path::Path,
+    monitors: &[String],
+) -> Result<usize> {
+    let Some(mut state) = State::load(state_path)? else {
+        return Ok(0);
+    };
+
+    let stopped = terminate_pids(&owned_swaybg_pids_for_monitors(&state, monitors))?;
+
+    state.clear_backend_pids_for_monitors(Backend::Swaybg, monitors);
+    state.save(state_path)?;
+
+    Ok(stopped)
+}
+
 fn run_daemon(config: &Config, state_path: &std::path::Path, once: bool) -> Result<()> {
     loop {
         let decision = live_pause_decision(config);
@@ -1196,6 +1278,9 @@ fn print_set_plan(plan: &crate::orchestrator::SetPlan, config: &Config) -> Resul
             println!("fallback: {}", awww::daemon_command());
             println!("command: {}", awww::apply_command(plan, &config.awww));
         }
+        Backend::Swaybg => {
+            println!("command: {}", swaybg::start_command(plan));
+        }
     }
 
     Ok(())
@@ -1285,6 +1370,7 @@ fn detected_static_auto_backend(config: &Config) -> Backend {
         StaticBackendPreference::Auto => select_static_auto_backend(config),
         StaticBackendPreference::Hyprpaper => Backend::Hyprpaper,
         StaticBackendPreference::Awww => Backend::Awww,
+        StaticBackendPreference::Swaybg => Backend::Swaybg,
     }
 }
 
@@ -1293,6 +1379,7 @@ fn select_static_auto_backend(config: &Config) -> Backend {
         config,
         backend_adapter(Backend::Hyprpaper).is_available(),
         backend_adapter(Backend::Awww).is_available(),
+        backend_adapter(Backend::Swaybg).is_available(),
     )
 }
 
@@ -1300,9 +1387,14 @@ fn select_static_auto_backend_with_availability(
     config: &Config,
     hyprpaper_available: bool,
     awww_available: bool,
+    swaybg_available: bool,
 ) -> Backend {
     if config.awww.enabled && awww_available {
         return Backend::Awww;
+    }
+
+    if swaybg_available {
+        return Backend::Swaybg;
     }
 
     if hyprpaper_available {
@@ -1313,7 +1405,7 @@ fn select_static_auto_backend_with_availability(
         return Backend::Awww;
     }
 
-    Backend::Hyprpaper
+    Backend::Swaybg
 }
 
 fn backend_adapter(backend: Backend) -> &'static dyn WallpaperBackend {
@@ -1321,6 +1413,7 @@ fn backend_adapter(backend: Backend) -> &'static dyn WallpaperBackend {
         Backend::Hyprpaper => &hyprpaper::HyprpaperBackend,
         Backend::Mpvpaper => &mpvpaper::MpvpaperBackend,
         Backend::Awww => &awww::AwwwBackend,
+        Backend::Swaybg => &swaybg::SwaybgBackend,
     }
 }
 
@@ -1369,21 +1462,42 @@ mod tests {
     use crate::media::MediaKind;
 
     #[test]
-    fn runtime_auto_backend_keeps_awww_opt_in() {
+    fn runtime_auto_backend_prefers_swaybg_over_hyprpaper() {
         let config = Config::default();
 
         assert_eq!(
-            select_static_auto_backend_with_availability(&config, true, true),
-            Backend::Hyprpaper
+            select_static_auto_backend_with_availability(&config, true, true, true),
+            Backend::Swaybg
         );
     }
 
     #[test]
-    fn runtime_auto_backend_falls_back_to_awww_when_hyprpaper_is_missing() {
+    fn runtime_auto_backend_keeps_awww_opt_in() {
+        let mut config = Config::default();
+        config.awww.enabled = true;
+
+        assert_eq!(
+            select_static_auto_backend_with_availability(&config, true, true, true),
+            Backend::Awww
+        );
+    }
+
+    #[test]
+    fn runtime_auto_backend_uses_swaybg_on_omarchy_systems() {
         let config = Config::default();
 
         assert_eq!(
-            select_static_auto_backend_with_availability(&config, false, true),
+            select_static_auto_backend_with_availability(&config, false, false, true),
+            Backend::Swaybg
+        );
+    }
+
+    #[test]
+    fn runtime_auto_backend_falls_back_to_awww_when_swaybg_and_hyprpaper_are_missing() {
+        let config = Config::default();
+
+        assert_eq!(
+            select_static_auto_backend_with_availability(&config, false, true, false),
             Backend::Awww
         );
     }
@@ -1409,7 +1523,7 @@ mod tests {
         let config = Config::default();
 
         assert_eq!(
-            select_static_auto_backend_with_availability(&config, true, true),
+            select_static_auto_backend_with_availability(&config, true, true, false),
             Backend::Hyprpaper
         );
     }

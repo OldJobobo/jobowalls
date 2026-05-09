@@ -13,6 +13,7 @@ pub enum StaticBackendPreference {
     Auto,
     Hyprpaper,
     Awww,
+    Swaybg,
 }
 
 impl Default for StaticBackendPreference {
@@ -85,6 +86,7 @@ impl Config {
             }
             StaticBackendPreference::Hyprpaper => Some(Backend::Hyprpaper),
             StaticBackendPreference::Awww => Some(Backend::Awww),
+            StaticBackendPreference::Swaybg => Some(Backend::Swaybg),
         }
     }
 }
@@ -146,6 +148,7 @@ pub enum BackendPreference {
     Hyprpaper,
     Mpvpaper,
     Awww,
+    Swaybg,
 }
 
 impl Default for BackendPreference {
@@ -161,6 +164,7 @@ impl BackendPreference {
             Self::Hyprpaper => Some(Backend::Hyprpaper),
             Self::Mpvpaper => Some(Backend::Mpvpaper),
             Self::Awww => Some(Backend::Awww),
+            Self::Swaybg => Some(Backend::Swaybg),
         }
     }
 }
