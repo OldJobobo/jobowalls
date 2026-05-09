@@ -128,6 +128,7 @@ fn render(window: &gtk::ApplicationWindow, state: Rc<RefCell<AppState>>) {
         let label = gtk::Label::new(Some(status));
         label.add_css_class("status");
         label.set_wrap(true);
+        label.set_width_request(520);
         root.append(&label);
     }
 

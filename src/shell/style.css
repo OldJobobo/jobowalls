@@ -15,12 +15,6 @@
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 8px;
   color: #ece8df;
-  overflow: hidden;
-}
-
-.thumb picture {
-  min-width: 100%;
-  min-height: 100%;
 }
 
 .neighbor {
@@ -45,7 +39,6 @@
 .status {
   color: #f0c36a;
   font-size: 12px;
-  max-width: 520px;
 }
 
 .empty {
