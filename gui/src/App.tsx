@@ -133,12 +133,16 @@ export default function App() {
       return;
     }
 
-    for (const offset of [-1, 0, 1]) {
-      const item = items[wrapIndex(selectedIndex + offset, items.length)];
-      if (item?.kind === "live") {
-        void warmLivePreview(item.path);
-      }
+    const item = items[selectedIndex];
+    if (item?.kind !== "live") {
+      return;
     }
+
+    const timeout = window.setTimeout(() => {
+      void warmLivePreview(item.path);
+    }, 220);
+
+    return () => window.clearTimeout(timeout);
   }, [items, selectedIndex]);
 
   const selectRelative = useCallback(

@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import type {
   JobowallsStatus,
   MediaSource,
@@ -36,11 +36,11 @@ export function applyWallpaper(path: string, monitor?: string | null) {
 }
 
 export function getMediaSource(path: string) {
-  return invoke<MediaSource>("get_media_source", { path });
+  return invoke<MediaSource>("get_media_source", { path }).then(withAssetUrl);
 }
 
 export function getLivePreviewSource(path: string) {
-  return invoke<MediaSource>("get_live_preview_source", { path });
+  return invoke<MediaSource>("get_live_preview_source", { path }).then(withAssetUrl);
 }
 
 export function warmLivePreview(path: string) {
@@ -53,4 +53,15 @@ export function saveLastFolder(path: string) {
 
 export function closePicker() {
   return invoke<void>("close_picker");
+}
+
+function withAssetUrl(source: MediaSource): MediaSource {
+  if (!source.src) {
+    return source;
+  }
+
+  return {
+    ...source,
+    src: convertFileSrc(source.src),
+  };
 }

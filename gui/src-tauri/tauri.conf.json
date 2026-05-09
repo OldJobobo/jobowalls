@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "jobowalls-gui",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "identifier": "dev.jobowalls.picker",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -31,7 +31,7 @@
       "csp": null,
       "assetProtocol": {
         "enable": true,
-        "scope": ["$HOME/**"]
+        "scope": ["**"]
       }
     }
   },

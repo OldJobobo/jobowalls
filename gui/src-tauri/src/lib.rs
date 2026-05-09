@@ -1,13 +1,13 @@
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashSet,
     fs,
     path::{Path, PathBuf},
     process::Command,
+    sync::{Mutex, OnceLock},
     time::{SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Manager};
-
-use base64::{engine::general_purpose, Engine as _};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -229,14 +229,9 @@ fn get_media_source(path: String) -> Result<MediaSource, String> {
         path_buf
     };
 
-    let bytes = fs::read(&preview_path)
-        .map_err(|error| format!("failed to read preview {}: {error}", preview_path.display()))?;
-    let mime = mime_for_path(&preview_path);
-    let encoded = general_purpose::STANDARD.encode(bytes);
-
     Ok(MediaSource {
         path,
-        src: Some(format!("data:{mime};base64,{encoded}")),
+        src: Some(preview_path.display().to_string()),
         reason: None,
     })
 }
@@ -252,17 +247,9 @@ fn get_live_preview_source(path: String) -> Result<MediaSource, String> {
         Ok(Some(path)) => path,
         _ => generate_video_animation(&path_buf)?,
     };
-    let bytes = fs::read(&preview_path).map_err(|error| {
-        format!(
-            "failed to read animated preview {}: {error}",
-            preview_path.display()
-        )
-    })?;
-    let encoded = general_purpose::STANDARD.encode(bytes);
-
     Ok(MediaSource {
         path,
-        src: Some(format!("data:image/webp;base64,{encoded}")),
+        src: Some(preview_path.display().to_string()),
         reason: None,
     })
 }
@@ -276,7 +263,10 @@ fn warm_live_preview(path: String) -> Result<(), String> {
 
     std::thread::spawn(move || {
         let _ = generate_video_poster(&path_buf);
-        let _ = generate_video_animation(&path_buf);
+        let _ = cached_video_animation_path(&path_buf)
+            .ok()
+            .flatten()
+            .or_else(|| generate_video_animation(&path_buf).ok());
     });
 
     Ok(())
@@ -334,21 +324,6 @@ fn classify_path(path: &Path) -> Option<MediaKind> {
     }
 }
 
-fn mime_for_path(path: &Path) -> &'static str {
-    match path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .map(|ext| ext.to_ascii_lowercase())
-        .as_deref()
-    {
-        Some("jpg" | "jpeg") => "image/jpeg",
-        Some("webp") => "image/webp",
-        Some("gif") => "image/gif",
-        Some("bmp") => "image/bmp",
-        _ => "image/png",
-    }
-}
-
 fn generate_video_poster(path: &Path) -> Result<PathBuf, String> {
     let cache_path = video_poster_cache_path(path)?;
     if cache_path.exists() {
@@ -389,44 +364,50 @@ fn generate_video_animation(path: &Path) -> Result<PathBuf, String> {
         })?;
     }
 
-    let status = match Command::new("ffmpeg")
-        .args([
-            "-y",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-ss",
-            "00:00:00.5",
-            "-t",
-            "1",
-            "-i",
-        ])
-        .arg(path)
-        .args([
-            "-vf",
-            "fps=7,scale=520:-1:flags=fast_bilinear",
-            "-loop",
-            "0",
-            "-quality",
-            "54",
-            "-compression_level",
-            "1",
-        ])
-        .arg(&cache_path)
-        .status()
-    {
-        Ok(status) => status,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return generate_video_poster(path);
+    with_generation_lock(cache_path.clone(), || {
+        if cache_path.exists() {
+            return Ok(cache_path);
         }
-        Err(error) => return Err(format!("failed to start ffmpeg: {error}")),
-    };
 
-    if status.success() && cache_path.exists() {
-        Ok(cache_path)
-    } else {
-        generate_video_poster(path)
-    }
+        let status = match Command::new("ffmpeg")
+            .args([
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-ss",
+                "00:00:00.5",
+                "-t",
+                "0.75",
+                "-i",
+            ])
+            .arg(path)
+            .args([
+                "-vf",
+                "fps=5,scale=420:-1:flags=fast_bilinear",
+                "-loop",
+                "0",
+                "-quality",
+                "48",
+                "-compression_level",
+                "0",
+            ])
+            .arg(&cache_path)
+            .status()
+        {
+            Ok(status) => status,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return generate_video_poster(path);
+            }
+            Err(error) => return Err(format!("failed to start ffmpeg: {error}")),
+        };
+
+        if status.success() && cache_path.exists() {
+            Ok(cache_path)
+        } else {
+            generate_video_poster(path)
+        }
+    })
 }
 
 fn cached_video_animation_path(path: &Path) -> Result<Option<PathBuf>, String> {
@@ -505,6 +486,39 @@ fn video_cache_path(path: &Path, extension: &str) -> Result<PathBuf, String> {
         .join("jobowalls")
         .join("gui-thumbnails");
     Ok(cache_dir.join(format!("{name}.{extension}")))
+}
+
+fn generation_locks() -> &'static Mutex<HashSet<PathBuf>> {
+    static LOCKS: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
+    LOCKS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn with_generation_lock<F>(cache_path: PathBuf, generate: F) -> Result<PathBuf, String>
+where
+    F: FnOnce() -> Result<PathBuf, String>,
+{
+    loop {
+        let inserted = {
+            let mut locks = generation_locks()
+                .lock()
+                .map_err(|_| "failed to lock preview generation state".to_string())?;
+            locks.insert(cache_path.clone())
+        };
+
+        if inserted {
+            let result = generate();
+            if let Ok(mut locks) = generation_locks().lock() {
+                locks.remove(&cache_path);
+            }
+            return result;
+        }
+
+        if cache_path.exists() {
+            return Ok(cache_path);
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
 }
 
 fn fnv1a_hex(bytes: &[u8]) -> String {
