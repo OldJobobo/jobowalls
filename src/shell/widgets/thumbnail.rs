@@ -10,6 +10,14 @@ pub enum ThumbnailRole {
     FarNext,
 }
 
+pub fn dimensions(role: ThumbnailRole) -> (i32, i32) {
+    match role {
+        ThumbnailRole::Selected => (250, 141),
+        ThumbnailRole::Previous | ThumbnailRole::Next => (150, 84),
+        ThumbnailRole::FarPrevious | ThumbnailRole::FarNext => (108, 61),
+    }
+}
+
 pub fn build(
     item: Option<&WallpaperItem>,
     role: ThumbnailRole,
@@ -26,11 +34,7 @@ pub fn build(
     if active {
         root.add_css_class("active");
     }
-    let (width, height) = match role {
-        ThumbnailRole::Selected => (250, 141),
-        ThumbnailRole::Previous | ThumbnailRole::Next => (150, 84),
-        ThumbnailRole::FarPrevious | ThumbnailRole::FarNext => (108, 61),
-    };
+    let (width, height) = dimensions(role);
     root.set_width_request(width);
     root.set_height_request(height);
 
