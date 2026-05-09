@@ -92,6 +92,86 @@ prepare_install_dirs() {
   fi
 }
 
+path_contains_dir() {
+  local dir="$1"
+  case ":${PATH:-}:" in
+    *":$dir:"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+append_profile_path() {
+  local profile="$HOME/.profile"
+  local marker="# jobowalls: add user-local binaries to PATH"
+
+  if [[ -f "$profile" ]] && grep -F "$marker" "$profile" >/dev/null 2>&1; then
+    return
+  fi
+
+  {
+    printf '\n%s\n' "$marker"
+    printf 'case ":$PATH:" in\n'
+    printf '  *":$HOME/.local/bin:"*) ;;\n'
+    printf '  *) export PATH="$HOME/.local/bin:$PATH" ;;\n'
+    printf 'esac\n'
+  } >>"$profile"
+}
+
+install_fish_path_config() {
+  local fish_dir="$HOME/.config/fish/conf.d"
+  local fish_config="$fish_dir/jobowalls-path.fish"
+
+  install -d "$fish_dir"
+  cat >"$fish_config" <<'EOF'
+if test -d "$HOME/.local/bin"
+    fish_add_path -U "$HOME/.local/bin"
+end
+EOF
+
+  if command -v fish >/dev/null 2>&1; then
+    fish -c 'fish_add_path -U -- $argv[1]' -- "$HOME/.local/bin" >/dev/null 2>&1 || true
+  fi
+}
+
+ensure_user_path() {
+  local default_bindir="$HOME/.local/bin"
+
+  if [[ "$BINDIR" != "$default_bindir" ]]; then
+    if ! path_contains_dir "$BINDIR"; then
+      echo "warning: $BINDIR is not in PATH; add it before running jobowalls by name" >&2
+    fi
+    return
+  fi
+
+  if path_contains_dir "$default_bindir"; then
+    return
+  fi
+
+  local updated_profile=0
+  if append_profile_path; then
+    updated_profile=1
+  else
+    echo "warning: failed to update ~/.profile; add $default_bindir to PATH manually" >&2
+  fi
+
+  if [[ "${SHELL:-}" == */fish ]] || [[ -d "$HOME/.config/fish" ]] || command -v fish >/dev/null 2>&1; then
+    if install_fish_path_config; then
+      echo "added $default_bindir to fish PATH via ~/.config/fish/conf.d/jobowalls-path.fish"
+    else
+      echo "warning: failed to update fish PATH; add $default_bindir with fish_add_path" >&2
+    fi
+  fi
+
+  if [[ "$updated_profile" -eq 1 ]]; then
+    echo "added $default_bindir to PATH via ~/.profile"
+  fi
+  if [[ "${SHELL:-}" == */fish ]]; then
+    echo "restart your shell, or run: fish_add_path -U $default_bindir"
+  else
+    echo "restart your shell, or run: export PATH=\"$default_bindir:\$PATH\""
+  fi
+}
+
 install_optional_backends() {
   if command -v omarchy >/dev/null 2>&1; then
     echo "installing live wallpaper backend with Omarchy"
@@ -161,7 +241,7 @@ install_from_release() {
       return 2
     }
   fi
-  install_or_permission_error -m 0644 "$tmpdir/share/applications/dev.jobowalls.picker.desktop" \
+  install_desktop_entry "$tmpdir/share/applications/dev.jobowalls.picker.desktop" \
     "$APPDIR/dev.jobowalls.picker.desktop" || {
     rm -rf "$tmpdir"
     return 2
@@ -224,6 +304,32 @@ EOF
     explain_permission_failure "$destination"
     return 2
   fi
+}
+
+install_desktop_entry() {
+  local source="$1"
+  local destination="$2"
+  local tmpfile
+  tmpfile="$(mktemp)" || return 1
+
+  if ! {
+    while IFS= read -r line; do
+      if [[ "$line" == Exec=* ]]; then
+        printf 'Exec=%s/jobowalls-gui\n' "$BINDIR"
+      else
+        printf '%s\n' "$line"
+      fi
+    done <"$source" >"$tmpfile"
+  }; then
+    rm -f "$tmpfile"
+    return 1
+  fi
+
+  if ! install_or_permission_error -m 0644 "$tmpfile" "$destination"; then
+    rm -f "$tmpfile"
+    return 2
+  fi
+  rm -f "$tmpfile"
 }
 
 ensure_checkout_for_source_build() {
@@ -291,7 +397,7 @@ install_from_source() {
   install_or_permission_error -m 0755 "$cli_bin" "$BINDIR/jobowalls"
   install_or_permission_error -m 0755 "$gui_bin" "$BINDIR/jobowalls-gui-bin"
   install_gui_wrapper "$BINDIR/jobowalls-gui"
-  install_or_permission_error -m 0644 "$ROOT_DIR/packaging/linux/dev.jobowalls.picker.desktop" \
+  install_desktop_entry "$ROOT_DIR/packaging/linux/dev.jobowalls.picker.desktop" \
     "$APPDIR/dev.jobowalls.picker.desktop"
 }
 
@@ -311,6 +417,7 @@ else
 fi
 
 install_optional_backends
+ensure_user_path
 
 echo "installed:"
 echo "  $BINDIR/jobowalls"

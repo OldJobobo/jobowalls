@@ -396,7 +396,7 @@ fn generate_static_preview(path: &Path) -> Result<PathBuf, String> {
         let status = match Command::new("ffmpeg")
             .args(["-y", "-hide_banner", "-loglevel", "error", "-i"])
             .arg(path)
-            .args(["-frames:v", "1", "-vf", "scale=960:-1", "-q:v", "5"])
+            .args(["-frames:v", "1", "-vf", "scale=1440:-1:flags=lanczos", "-q:v", "3"])
             .arg(&cache_path)
             .status()
         {
@@ -487,19 +487,19 @@ fn generate_video_animation(path: &Path) -> Result<PathBuf, String> {
                 "-ss",
                 "00:00:00.5",
                 "-t",
-                "0.75",
+                "1",
                 "-i",
             ])
             .arg(path)
             .args([
                 "-vf",
-                "fps=5,scale=420:-1:flags=fast_bilinear",
+                "fps=10,scale=1080:-1:flags=lanczos",
                 "-loop",
                 "0",
                 "-quality",
-                "48",
+                "82",
                 "-compression_level",
-                "0",
+                "4",
             ])
             .arg(&cache_path)
             .status()
@@ -530,7 +530,7 @@ fn try_ffmpegthumbnailer(input: &Path, output: &Path) -> Result<bool, String> {
         .arg(input)
         .args(["-o"])
         .arg(output)
-        .args(["-s", "960", "-q", "8", "-t", "10%"])
+        .args(["-s", "1440", "-q", "9", "-t", "10%"])
         .status()
     {
         Ok(status) => status,
@@ -553,7 +553,7 @@ fn try_ffmpeg(input: &Path, output: &Path) -> Result<bool, String> {
             "-i",
         ])
         .arg(input)
-        .args(["-frames:v", "1", "-vf", "scale=960:-1"])
+        .args(["-frames:v", "1", "-vf", "scale=1440:-1:flags=lanczos", "-q:v", "3"])
         .arg(output)
         .status()
     {
@@ -566,15 +566,15 @@ fn try_ffmpeg(input: &Path, output: &Path) -> Result<bool, String> {
 }
 
 fn video_poster_cache_path(path: &Path) -> Result<PathBuf, String> {
-    video_cache_path(path, "jpg")
+    video_cache_path(path, "poster-v2.jpg")
 }
 
 fn static_preview_cache_path(path: &Path) -> Result<PathBuf, String> {
-    video_cache_path(path, "static.jpg")
+    video_cache_path(path, "static-v2.jpg")
 }
 
 fn video_animation_cache_path(path: &Path) -> Result<PathBuf, String> {
-    video_cache_path(path, "webp")
+    video_cache_path(path, "preview-v3.webp")
 }
 
 fn video_cache_path(path: &Path, extension: &str) -> Result<PathBuf, String> {
@@ -675,12 +675,28 @@ fn resolve_jobowalls_binary() -> PathBuf {
         return PathBuf::from(path);
     }
 
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let candidate = dir.join("jobowalls");
+            if candidate.exists() {
+                return candidate;
+            }
+        }
+    }
+
     if let Ok(cwd) = std::env::current_dir() {
         for base in cwd.ancestors() {
             let candidate = base.join("target").join("debug").join("jobowalls");
             if candidate.exists() {
                 return candidate;
             }
+        }
+    }
+
+    if let Some(home) = dirs::home_dir() {
+        let candidate = home.join(".local").join("bin").join("jobowalls");
+        if candidate.exists() {
+            return candidate;
         }
     }
 

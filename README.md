@@ -88,7 +88,11 @@ This installs:
 ~/.local/share/applications/dev.jobowalls.picker.desktop
 ```
 
-Make sure `~/.local/bin` is in your `PATH`.
+When installing to the default prefix, the installer adds `~/.local/bin` to
+your user `PATH` when it is missing. Fish users get a small
+`~/.config/fish/conf.d/jobowalls-path.fish` snippet; other shells get a
+`~/.profile` update. Restart your shell after install if `jobowalls` is not
+found immediately.
 
 To install somewhere else:
 
