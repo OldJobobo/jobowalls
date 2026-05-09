@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_URL="${REPO_URL:-https://github.com/OldJobobo/jobowalls.git}"
 PREFIX="${PREFIX:-"$HOME/.local"}"
 BINDIR="${BINDIR:-"$PREFIX/bin"}"
 APPDIR="${APPDIR:-"$PREFIX/share/applications"}"
@@ -14,7 +15,12 @@ usage() {
   cat <<EOF
 Usage: ./install.sh
 
+Or:
+  curl -fsSL https://raw.githubusercontent.com/OldJobobo/jobowalls/master/install.sh | bash
+
 Environment:
+  REPO_URL Install source when run outside a checkout.
+           Default: https://github.com/OldJobobo/jobowalls.git
   PREFIX   Install prefix. Default: $HOME/.local
   BINDIR   Binary directory. Default: \$PREFIX/bin
   APPDIR   Desktop entry directory. Default: \$PREFIX/share/applications
@@ -38,6 +44,33 @@ need() {
     exit 1
   fi
 }
+
+run_from_checkout_or_clone() {
+  if [[ -f "$ROOT_DIR/Cargo.toml" && -f "$ROOT_DIR/gui/package.json" ]]; then
+    return
+  fi
+
+  need git
+
+  local tmpdir
+  tmpdir="$(mktemp -d)"
+  trap 'rm -rf "$tmpdir"' EXIT
+
+  echo "install.sh is not running from a jobowalls checkout"
+  echo "cloning $REPO_URL"
+  git clone --depth 1 "$REPO_URL" "$tmpdir/jobowalls"
+
+  echo "running installer from cloned checkout"
+  exec env \
+    REPO_URL="$REPO_URL" \
+    PREFIX="$PREFIX" \
+    BINDIR="$BINDIR" \
+    APPDIR="$APPDIR" \
+    PROFILE="$PROFILE" \
+    "$tmpdir/jobowalls/install.sh" "$@"
+}
+
+run_from_checkout_or_clone "$@"
 
 cargo_args=()
 if [[ "$PROFILE" == "release" ]]; then
@@ -74,4 +107,3 @@ echo "installed:"
 echo "  $BINDIR/jobowalls"
 echo "  $BINDIR/jobowalls-gui"
 echo "  $APPDIR/dev.jobowalls.picker.desktop"
-
