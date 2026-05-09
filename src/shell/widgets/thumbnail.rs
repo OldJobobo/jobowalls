@@ -38,6 +38,10 @@ pub fn build(
         let selected = role == ThumbnailRole::Selected;
         let display_path = preview::display_path(item, selected, animate_live);
         let image = gtk::Picture::for_filename(display_path);
+        image.add_css_class("thumb-image");
+        if selected {
+            image.add_css_class("selected-image");
+        }
         image.set_can_shrink(true);
         image.set_width_request(width);
         image.set_height_request(height);

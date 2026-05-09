@@ -20,6 +20,20 @@
   color: #ece8df;
 }
 
+.thumb-image {
+  border-radius: 6px;
+  box-shadow:
+    0 18px 42px rgba(0, 0, 0, 0.55),
+    0 2px 10px rgba(0, 0, 0, 0.45);
+}
+
+.selected-image {
+  box-shadow:
+    0 24px 56px rgba(0, 0, 0, 0.62),
+    0 0 0 1px rgba(255, 255, 255, 0.18),
+    0 0 24px rgba(216, 167, 79, 0.18);
+}
+
 .neighbor {
   opacity: 0.76;
 }
