@@ -39,6 +39,8 @@ pub fn build(
         let display_path = preview::display_path(item, selected, animate_live);
         let image = gtk::Picture::for_filename(display_path);
         image.set_can_shrink(true);
+        image.set_width_request(width);
+        image.set_height_request(height);
         root.append(&image);
 
         if item.is_live() {

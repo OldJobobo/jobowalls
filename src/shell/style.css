@@ -13,11 +13,11 @@
 }
 
 .thumb {
-  background: rgba(11, 13, 15, 0.78);
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 8px;
+  background: transparent;
+  border: 0 solid transparent;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
   color: #ece8df;
-  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.34);
 }
 
 .neighbor {
@@ -29,18 +29,18 @@
 }
 
 .selected {
-  border-color: #d8a74f;
+  border-bottom-color: #d8a74f;
   opacity: 1;
 }
 
 .active {
-  border-color: #75c7a1;
+  border-bottom-color: #75c7a1;
 }
 
 .live-label {
   font-weight: 700;
   letter-spacing: 0;
-  margin-top: 44px;
+  margin-top: 2px;
 }
 
 .status {
