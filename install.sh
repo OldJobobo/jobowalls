@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_SOURCE="${BASH_SOURCE[0]-}"
-if [[ -n "$SCRIPT_SOURCE" && -f "$SCRIPT_SOURCE" ]]; then
+SCRIPT_SOURCE="${0:-}"
+if [[ -n "$SCRIPT_SOURCE" && "$SCRIPT_SOURCE" != "bash" && -f "$SCRIPT_SOURCE" ]]; then
   ROOT_DIR="$(cd "$(dirname "$SCRIPT_SOURCE")" && pwd)"
 else
   ROOT_DIR="$(pwd)"
