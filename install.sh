@@ -195,13 +195,23 @@ if [[ -n "${GDK_BACKEND:-}" ]]; then
   exec "$bin" "$@"
 fi
 
+if [[ -n "${DISPLAY:-}" ]]; then
+  GDK_BACKEND=x11 "$bin" "$@"
+  status=$?
+  if [[ "$status" -ne 0 && -n "${WAYLAND_DISPLAY:-}" ]]; then
+    echo "jobowalls-gui: X11 launch failed with status $status; retrying with GDK_BACKEND=wayland" >&2
+    GDK_BACKEND=wayland "$bin" "$@"
+    exit $?
+  fi
+  exit "$status"
+fi
+
 GDK_BACKEND=wayland "$bin" "$@"
 status=$?
 
-if [[ "$status" -ne 0 && -n "${DISPLAY:-}" ]]; then
-  echo "jobowalls-gui: Wayland launch failed with status $status; retrying with GDK_BACKEND=x11" >&2
-  GDK_BACKEND=x11 "$bin" "$@"
-  exit $?
+if [[ "$status" -ne 0 ]]; then
+  echo "jobowalls-gui: Wayland launch failed with status $status" >&2
+  exit "$status"
 fi
 
 exit "$status"
