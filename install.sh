@@ -88,6 +88,13 @@ fi
 need cargo
 need npm
 
+if command -v omarchy >/dev/null 2>&1; then
+  echo "installing live wallpaper backend with Omarchy"
+  omarchy pkg aur add mpvpaper
+else
+  echo "omarchy not found; skipping automatic mpvpaper install"
+fi
+
 echo "building jobowalls CLI ($PROFILE)"
 cargo build "${cargo_args[@]}" --manifest-path "$ROOT_DIR/Cargo.toml"
 

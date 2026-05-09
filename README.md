@@ -45,12 +45,6 @@ Runtime backends:
 - `mpvpaper` for live wallpapers
 - `awww` and `awww-daemon` if you want optional static transitions
 
-On Omarchy, install the live wallpaper backend with:
-
-```bash
-omarchy pkg aur add mpvpaper
-```
-
 GUI preview helpers:
 
 - `ffmpeg` for animated live wallpaper previews
