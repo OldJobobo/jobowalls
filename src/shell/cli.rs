@@ -19,11 +19,11 @@ pub struct ShellArgs {
     pub position: ShellPosition,
 
     /// Overlay width in pixels.
-    #[arg(long, default_value_t = 640)]
+    #[arg(long, default_value_t = 860)]
     pub width: i32,
 
     /// Overlay height in pixels.
-    #[arg(long, default_value_t = 170)]
+    #[arg(long, default_value_t = 190)]
     pub height: i32,
 
     /// Disable animated live previews.

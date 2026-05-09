@@ -1,24 +1,27 @@
 .shell-root {
-  background: rgba(20, 22, 24, 0.76);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 8px;
-  padding: 14px 18px;
+  background: transparent;
+  padding: 10px 14px;
 }
 
 .carousel {
-  min-width: 560px;
-  min-height: 136px;
+  min-width: 760px;
+  min-height: 154px;
 }
 
 .thumb {
-  background: rgba(7, 9, 11, 0.64);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(11, 13, 15, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.16);
   border-radius: 8px;
   color: #ece8df;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.34);
 }
 
 .neighbor {
-  opacity: 0.68;
+  opacity: 0.76;
+}
+
+.far-neighbor {
+  opacity: 0.52;
 }
 
 .selected {

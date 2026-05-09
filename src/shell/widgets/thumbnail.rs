@@ -3,9 +3,11 @@ use gtk::prelude::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThumbnailRole {
+    FarPrevious,
     Previous,
     Selected,
     Next,
+    FarNext,
 }
 
 pub fn build(
@@ -19,20 +21,18 @@ pub fn build(
     match role {
         ThumbnailRole::Selected => root.add_css_class("selected"),
         ThumbnailRole::Previous | ThumbnailRole::Next => root.add_css_class("neighbor"),
+        ThumbnailRole::FarPrevious | ThumbnailRole::FarNext => root.add_css_class("far-neighbor"),
     }
     if active {
         root.add_css_class("active");
     }
-    root.set_width_request(if role == ThumbnailRole::Selected {
-        240
-    } else {
-        132
-    });
-    root.set_height_request(if role == ThumbnailRole::Selected {
-        135
-    } else {
-        74
-    });
+    let (width, height) = match role {
+        ThumbnailRole::Selected => (250, 141),
+        ThumbnailRole::Previous | ThumbnailRole::Next => (150, 84),
+        ThumbnailRole::FarPrevious | ThumbnailRole::FarNext => (108, 61),
+    };
+    root.set_width_request(width);
+    root.set_height_request(height);
 
     if let Some(item) = item {
         let selected = role == ThumbnailRole::Selected;
