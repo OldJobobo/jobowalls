@@ -39,8 +39,16 @@ export function getMediaSource(path: string) {
   return invoke<MediaSource>("get_media_source", { path }).then(withAssetUrl);
 }
 
+export function getMediaDataSource(path: string) {
+  return invoke<MediaSource>("get_media_data_source", { path });
+}
+
 export function getLivePreviewSource(path: string) {
   return invoke<MediaSource>("get_live_preview_source", { path }).then(withAssetUrl);
+}
+
+export function getLivePreviewDataSource(path: string) {
+  return invoke<MediaSource>("get_live_preview_data_source", { path });
 }
 
 export function warmLivePreview(path: string) {

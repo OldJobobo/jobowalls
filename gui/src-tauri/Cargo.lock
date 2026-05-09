@@ -1568,8 +1568,9 @@ dependencies = [
 
 [[package]]
 name = "jobowalls-gui"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
+ "base64 0.22.1",
  "dirs",
  "serde",
  "serde_json",

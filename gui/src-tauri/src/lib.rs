@@ -9,6 +9,8 @@ use std::{
 };
 use tauri::{AppHandle, Manager};
 
+use base64::{engine::general_purpose, Engine as _};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 enum MediaKind {
@@ -237,6 +239,26 @@ fn get_media_source(path: String) -> Result<MediaSource, String> {
 }
 
 #[tauri::command]
+fn get_media_data_source(path: String) -> Result<MediaSource, String> {
+    let path_buf = PathBuf::from(&path);
+    let Some(kind) = classify_path(&path_buf) else {
+        return Ok(MediaSource {
+            path,
+            src: None,
+            reason: Some("unsupported media type".to_string()),
+        });
+    };
+
+    let preview_path = if matches!(kind, MediaKind::Live) {
+        generate_video_poster(&path_buf)?
+    } else {
+        path_buf
+    };
+
+    data_source(path, &preview_path)
+}
+
+#[tauri::command]
 fn get_live_preview_source(path: String) -> Result<MediaSource, String> {
     let path_buf = PathBuf::from(&path);
     if !matches!(classify_path(&path_buf), Some(MediaKind::Live)) {
@@ -252,6 +274,20 @@ fn get_live_preview_source(path: String) -> Result<MediaSource, String> {
         src: Some(preview_path.display().to_string()),
         reason: None,
     })
+}
+
+#[tauri::command]
+fn get_live_preview_data_source(path: String) -> Result<MediaSource, String> {
+    let path_buf = PathBuf::from(&path);
+    if !matches!(classify_path(&path_buf), Some(MediaKind::Live)) {
+        return get_media_data_source(path);
+    }
+
+    let preview_path = match cached_video_animation_path(&path_buf) {
+        Ok(Some(path)) => path,
+        _ => generate_video_animation(&path_buf)?,
+    };
+    data_source(path, &preview_path)
 }
 
 #[tauri::command]
@@ -321,6 +357,34 @@ fn classify_path(path: &Path) -> Option<MediaKind> {
         "jpg" | "jpeg" | "png" | "webp" | "bmp" | "gif" => Some(MediaKind::Static),
         "mp4" | "webm" | "mkv" | "mov" | "avi" => Some(MediaKind::Live),
         _ => None,
+    }
+}
+
+fn data_source(path: String, preview_path: &Path) -> Result<MediaSource, String> {
+    let bytes = fs::read(preview_path)
+        .map_err(|error| format!("failed to read preview {}: {error}", preview_path.display()))?;
+    let mime = mime_for_path(preview_path);
+    let encoded = general_purpose::STANDARD.encode(bytes);
+
+    Ok(MediaSource {
+        path,
+        src: Some(format!("data:{mime};base64,{encoded}")),
+        reason: None,
+    })
+}
+
+fn mime_for_path(path: &Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("jpg" | "jpeg") => "image/jpeg",
+        Some("webp") => "image/webp",
+        Some("gif") => "image/gif",
+        Some("bmp") => "image/bmp",
+        _ => "image/png",
     }
 }
 
@@ -596,7 +660,9 @@ pub fn run() {
             preview_plan,
             apply_wallpaper,
             get_media_source,
+            get_media_data_source,
             get_live_preview_source,
+            get_live_preview_data_source,
             warm_live_preview,
             save_last_folder,
             close_picker,
