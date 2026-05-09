@@ -280,11 +280,12 @@ install_from_source() {
   echo "installing GUI dependencies"
   npm --prefix "$ROOT_DIR/gui" install
 
-  echo "building GUI frontend"
-  npm --prefix "$ROOT_DIR/gui" run build
-
   echo "building jobowalls GUI ($PROFILE)"
-  cargo build "${cargo_args[@]}" --manifest-path "$ROOT_DIR/gui/src-tauri/Cargo.toml"
+  if [[ "$PROFILE" == "release" ]]; then
+    npm --prefix "$ROOT_DIR/gui" run tauri:build -- --no-bundle
+  else
+    cargo build "${cargo_args[@]}" --manifest-path "$ROOT_DIR/gui/src-tauri/Cargo.toml"
+  fi
 
   prepare_install_dirs
   install_or_permission_error -m 0755 "$cli_bin" "$BINDIR/jobowalls"

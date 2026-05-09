@@ -42,8 +42,7 @@ prepare() {
 build() {
   cd "$srcdir/$pkgname"
   cargo build --release --locked
-  npm --prefix gui run build
-  cargo build --release --locked --manifest-path gui/src-tauri/Cargo.toml
+  npm --prefix gui run tauri:build -- --no-bundle
 }
 
 check() {

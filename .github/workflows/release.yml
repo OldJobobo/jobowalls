@@ -51,11 +51,8 @@ jobs:
       - name: Install GUI dependencies
         run: npm --prefix gui ci
 
-      - name: Build GUI frontend
-        run: npm --prefix gui run build
-
       - name: Build GUI binary
-        run: cargo build --release --locked --manifest-path gui/src-tauri/Cargo.toml
+        run: npm --prefix gui run tauri:build -- --no-bundle
 
       - name: Test
         run: |
