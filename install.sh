@@ -57,6 +57,41 @@ need() {
   fi
 }
 
+explain_permission_failure() {
+  local path="$1"
+  cat >&2 <<EOF
+permission denied while installing: $path
+
+jobowalls installs to user-writable paths by default:
+  BINDIR=$BINDIR
+  APPDIR=$APPDIR
+
+If an earlier install created root-owned files, remove or chown these paths:
+  $BINDIR/jobowalls
+  $BINDIR/jobowalls-gui
+  $BINDIR/jobowalls-gui-bin
+  $APPDIR/dev.jobowalls.picker.desktop
+
+You can also install somewhere else with:
+  PREFIX=/some/writable/path ./install.sh
+EOF
+}
+
+install_or_permission_error() {
+  local destination="${@: -1}"
+  if ! install "$@"; then
+    explain_permission_failure "$destination"
+    return 2
+  fi
+}
+
+prepare_install_dirs() {
+  if ! install -d "$BINDIR" "$APPDIR"; then
+    explain_permission_failure "$BINDIR or $APPDIR"
+    return 2
+  fi
+}
+
 install_optional_backends() {
   if command -v omarchy >/dev/null 2>&1; then
     echo "installing live wallpaper backend with Omarchy"
@@ -87,25 +122,50 @@ install_from_release() {
   tmpdir="$(mktemp -d)"
   archive="$tmpdir/$ARTIFACT_NAME"
 
+  prepare_install_dirs || {
+    rm -rf "$tmpdir"
+    return 2
+  }
+
   echo "downloading $url"
   if ! curl -fL "$url" -o "$archive"; then
     rm -rf "$tmpdir"
     return 1
   fi
 
-  tar -xzf "$archive" -C "$tmpdir"
-
-  install -d "$BINDIR" "$APPDIR"
-  install -m 0755 "$tmpdir/bin/jobowalls" "$BINDIR/jobowalls"
-  if [[ -x "$tmpdir/bin/jobowalls-gui-bin" ]]; then
-    install -m 0755 "$tmpdir/bin/jobowalls-gui-bin" "$BINDIR/jobowalls-gui-bin"
-    install -m 0755 "$tmpdir/bin/jobowalls-gui" "$BINDIR/jobowalls-gui"
-  else
-    install -m 0755 "$tmpdir/bin/jobowalls-gui" "$BINDIR/jobowalls-gui-bin"
-    install_gui_wrapper "$BINDIR/jobowalls-gui"
+  if ! tar -xzf "$archive" -C "$tmpdir"; then
+    rm -rf "$tmpdir"
+    return 1
   fi
-  install -m 0644 "$tmpdir/share/applications/dev.jobowalls.picker.desktop" \
-    "$APPDIR/dev.jobowalls.picker.desktop"
+
+  install_or_permission_error -m 0755 "$tmpdir/bin/jobowalls" "$BINDIR/jobowalls" || {
+    rm -rf "$tmpdir"
+    return 2
+  }
+  if [[ -x "$tmpdir/bin/jobowalls-gui-bin" ]]; then
+    install_or_permission_error -m 0755 "$tmpdir/bin/jobowalls-gui-bin" "$BINDIR/jobowalls-gui-bin" || {
+      rm -rf "$tmpdir"
+      return 2
+    }
+    install_or_permission_error -m 0755 "$tmpdir/bin/jobowalls-gui" "$BINDIR/jobowalls-gui" || {
+      rm -rf "$tmpdir"
+      return 2
+    }
+  else
+    install_or_permission_error -m 0755 "$tmpdir/bin/jobowalls-gui" "$BINDIR/jobowalls-gui-bin" || {
+      rm -rf "$tmpdir"
+      return 2
+    }
+    install_gui_wrapper "$BINDIR/jobowalls-gui" || {
+      rm -rf "$tmpdir"
+      return 2
+    }
+  fi
+  install_or_permission_error -m 0644 "$tmpdir/share/applications/dev.jobowalls.picker.desktop" \
+    "$APPDIR/dev.jobowalls.picker.desktop" || {
+    rm -rf "$tmpdir"
+    return 2
+  }
 
   rm -rf "$tmpdir"
 }
@@ -113,11 +173,11 @@ install_from_release() {
 install_gui_wrapper() {
   local destination="$1"
   if [[ -f "$GUI_WRAPPER_SOURCE" ]]; then
-    install -m 0755 "$GUI_WRAPPER_SOURCE" "$destination"
+    install_or_permission_error -m 0755 "$GUI_WRAPPER_SOURCE" "$destination"
     return
   fi
 
-  cat >"$destination" <<'EOF'
+  if ! cat >"$destination" <<'EOF'
 #!/usr/bin/env bash
 set -uo pipefail
 
@@ -146,7 +206,14 @@ fi
 
 exit "$status"
 EOF
-  chmod 0755 "$destination"
+  then
+    explain_permission_failure "$destination"
+    return 2
+  fi
+  if ! chmod 0755 "$destination"; then
+    explain_permission_failure "$destination"
+    return 2
+  fi
 }
 
 ensure_checkout_for_source_build() {
@@ -209,24 +276,30 @@ install_from_source() {
   echo "building jobowalls GUI ($PROFILE)"
   cargo build "${cargo_args[@]}" --manifest-path "$ROOT_DIR/gui/src-tauri/Cargo.toml"
 
-  install -d "$BINDIR" "$APPDIR"
-  install -m 0755 "$cli_bin" "$BINDIR/jobowalls"
-  install -m 0755 "$gui_bin" "$BINDIR/jobowalls-gui-bin"
+  prepare_install_dirs
+  install_or_permission_error -m 0755 "$cli_bin" "$BINDIR/jobowalls"
+  install_or_permission_error -m 0755 "$gui_bin" "$BINDIR/jobowalls-gui-bin"
   install_gui_wrapper "$BINDIR/jobowalls-gui"
-  install -m 0644 "$ROOT_DIR/packaging/linux/dev.jobowalls.picker.desktop" \
+  install_or_permission_error -m 0644 "$ROOT_DIR/packaging/linux/dev.jobowalls.picker.desktop" \
     "$APPDIR/dev.jobowalls.picker.desktop"
 }
-
-install_optional_backends
 
 if [[ "$BUILD_FROM_SOURCE" == "1" ]]; then
   install_from_source "$@"
 else
-  if ! install_from_release; then
-    echo "release binary install failed; falling back to source build"
+  set +e
+  install_from_release
+  status=$?
+  set -e
+  if [[ "$status" -eq 1 ]]; then
+    echo "release binary download or unpack failed; falling back to source build"
     install_from_source "$@"
+  elif [[ "$status" -ne 0 ]]; then
+    exit "$status"
   fi
 fi
+
+install_optional_backends
 
 echo "installed:"
 echo "  $BINDIR/jobowalls"
