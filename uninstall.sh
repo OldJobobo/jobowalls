@@ -9,6 +9,9 @@ usage() {
   cat <<EOF
 Usage: ./uninstall.sh
 
+Or:
+  curl -fsSL https://raw.githubusercontent.com/OldJobobo/jobowalls/refs/heads/master/uninstall.sh | bash
+
 Environment:
   PREFIX   Install prefix. Default: $HOME/.local
   BINDIR   Binary directory. Default: \$PREFIX/bin
@@ -42,4 +45,3 @@ done
 if [[ "$removed" -eq 0 ]]; then
   echo "nothing to remove"
 fi
-

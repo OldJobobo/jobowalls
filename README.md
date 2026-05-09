@@ -94,10 +94,22 @@ PREFIX=/usr/local ./install.sh
 Uninstall:
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/OldJobobo/jobowalls/refs/heads/master/uninstall.sh | bash
+```
+
+Or from a checkout:
+
+```bash
 ./uninstall.sh
 ```
 
 Or, for a custom prefix:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/OldJobobo/jobowalls/refs/heads/master/uninstall.sh | PREFIX=/usr/local bash
+```
+
+Or from a checkout:
 
 ```bash
 PREFIX=/usr/local ./uninstall.sh
