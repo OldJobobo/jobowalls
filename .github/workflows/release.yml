@@ -71,6 +71,8 @@ jobs:
           install -m 0755 target/release/jobowalls \
             dist/jobowalls-x86_64-unknown-linux-gnu/bin/jobowalls
           install -m 0755 gui/src-tauri/target/release/jobowalls-gui \
+            dist/jobowalls-x86_64-unknown-linux-gnu/bin/jobowalls-gui-bin
+          install -m 0755 packaging/linux/jobowalls-gui \
             dist/jobowalls-x86_64-unknown-linux-gnu/bin/jobowalls-gui
           install -m 0644 packaging/linux/dev.jobowalls.picker.desktop \
             dist/jobowalls-x86_64-unknown-linux-gnu/share/applications/dev.jobowalls.picker.desktop

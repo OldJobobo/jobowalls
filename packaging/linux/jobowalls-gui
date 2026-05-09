@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+bin="${JOBOWALLS_GUI_BIN:-$(dirname "$0")/jobowalls-gui-bin}"
+
+if [[ ! -x "$bin" ]]; then
+  echo "jobowalls-gui binary not found: $bin" >&2
+  exit 127
+fi
+
+export WEBKIT_DISABLE_DMABUF_RENDERER="${WEBKIT_DISABLE_DMABUF_RENDERER:-1}"
+export WEBKIT_DISABLE_COMPOSITING_MODE="${WEBKIT_DISABLE_COMPOSITING_MODE:-1}"
+
+if [[ -n "${GDK_BACKEND:-}" ]]; then
+  exec "$bin" "$@"
+fi
+
+GDK_BACKEND=wayland "$bin" "$@"
+status=$?
+
+if [[ "$status" -ne 0 && -n "${DISPLAY:-}" ]]; then
+  echo "jobowalls-gui: Wayland launch failed with status $status; retrying with GDK_BACKEND=x11" >&2
+  GDK_BACKEND=x11 "$bin" "$@"
+  exit $?
+fi
+
+exit "$status"
+

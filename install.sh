@@ -19,6 +19,7 @@ APPDIR="${APPDIR:-"$PREFIX/share/applications"}"
 PROFILE="${PROFILE:-release}"
 TARGET="${TARGET:-x86_64-unknown-linux-gnu}"
 ARTIFACT_NAME="${ARTIFACT_NAME:-jobowalls-${TARGET}.tar.gz}"
+GUI_WRAPPER_SOURCE="$ROOT_DIR/packaging/linux/jobowalls-gui"
 
 usage() {
   cat <<EOF
@@ -96,11 +97,56 @@ install_from_release() {
 
   install -d "$BINDIR" "$APPDIR"
   install -m 0755 "$tmpdir/bin/jobowalls" "$BINDIR/jobowalls"
-  install -m 0755 "$tmpdir/bin/jobowalls-gui" "$BINDIR/jobowalls-gui"
+  if [[ -x "$tmpdir/bin/jobowalls-gui-bin" ]]; then
+    install -m 0755 "$tmpdir/bin/jobowalls-gui-bin" "$BINDIR/jobowalls-gui-bin"
+    install -m 0755 "$tmpdir/bin/jobowalls-gui" "$BINDIR/jobowalls-gui"
+  else
+    install -m 0755 "$tmpdir/bin/jobowalls-gui" "$BINDIR/jobowalls-gui-bin"
+    install_gui_wrapper "$BINDIR/jobowalls-gui"
+  fi
   install -m 0644 "$tmpdir/share/applications/dev.jobowalls.picker.desktop" \
     "$APPDIR/dev.jobowalls.picker.desktop"
 
   rm -rf "$tmpdir"
+}
+
+install_gui_wrapper() {
+  local destination="$1"
+  if [[ -f "$GUI_WRAPPER_SOURCE" ]]; then
+    install -m 0755 "$GUI_WRAPPER_SOURCE" "$destination"
+    return
+  fi
+
+  cat >"$destination" <<'EOF'
+#!/usr/bin/env bash
+set -uo pipefail
+
+bin="${JOBOWALLS_GUI_BIN:-$(dirname "$0")/jobowalls-gui-bin}"
+
+if [[ ! -x "$bin" ]]; then
+  echo "jobowalls-gui binary not found: $bin" >&2
+  exit 127
+fi
+
+export WEBKIT_DISABLE_DMABUF_RENDERER="${WEBKIT_DISABLE_DMABUF_RENDERER:-1}"
+export WEBKIT_DISABLE_COMPOSITING_MODE="${WEBKIT_DISABLE_COMPOSITING_MODE:-1}"
+
+if [[ -n "${GDK_BACKEND:-}" ]]; then
+  exec "$bin" "$@"
+fi
+
+GDK_BACKEND=wayland "$bin" "$@"
+status=$?
+
+if [[ "$status" -ne 0 && -n "${DISPLAY:-}" ]]; then
+  echo "jobowalls-gui: Wayland launch failed with status $status; retrying with GDK_BACKEND=x11" >&2
+  GDK_BACKEND=x11 "$bin" "$@"
+  exit $?
+fi
+
+exit "$status"
+EOF
+  chmod 0755 "$destination"
 }
 
 ensure_checkout_for_source_build() {
@@ -165,7 +211,8 @@ install_from_source() {
 
   install -d "$BINDIR" "$APPDIR"
   install -m 0755 "$cli_bin" "$BINDIR/jobowalls"
-  install -m 0755 "$gui_bin" "$BINDIR/jobowalls-gui"
+  install -m 0755 "$gui_bin" "$BINDIR/jobowalls-gui-bin"
+  install_gui_wrapper "$BINDIR/jobowalls-gui"
   install -m 0644 "$ROOT_DIR/packaging/linux/dev.jobowalls.picker.desktop" \
     "$APPDIR/dev.jobowalls.picker.desktop"
 }

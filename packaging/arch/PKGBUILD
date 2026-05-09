@@ -56,8 +56,8 @@ check() {
 package() {
   cd "$srcdir/$pkgname"
   install -Dm755 target/release/jobowalls "$pkgdir/usr/bin/jobowalls"
-  install -Dm755 gui/src-tauri/target/release/jobowalls-gui "$pkgdir/usr/bin/jobowalls-gui"
+  install -Dm755 gui/src-tauri/target/release/jobowalls-gui "$pkgdir/usr/bin/jobowalls-gui-bin"
+  install -Dm755 packaging/linux/jobowalls-gui "$pkgdir/usr/bin/jobowalls-gui"
   install -Dm644 packaging/linux/dev.jobowalls.picker.desktop \
     "$pkgdir/usr/share/applications/dev.jobowalls.picker.desktop"
 }
-

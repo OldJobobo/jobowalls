@@ -33,6 +33,7 @@ removed=0
 for path in \
   "$BINDIR/jobowalls" \
   "$BINDIR/jobowalls-gui" \
+  "$BINDIR/jobowalls-gui-bin" \
   "$APPDIR/dev.jobowalls.picker.desktop"
 do
   if [[ -e "$path" || -L "$path" ]]; then

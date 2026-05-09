@@ -13,7 +13,7 @@ The package builds both binaries:
 
 - `/usr/bin/jobowalls`
 - `/usr/bin/jobowalls-gui`
+- `/usr/bin/jobowalls-gui-bin`
 
 Runtime wallpaper backend integrations remain optional dependencies because
 `jobowalls` can report availability and choose configured backends at runtime.
-
