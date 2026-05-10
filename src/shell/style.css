@@ -25,6 +25,14 @@
     0 2px 10px rgba(0, 0, 0, 0.45);
 }
 
+.thumb-placeholder {
+  background: rgba(16, 16, 18, 0.72);
+  border-radius: 6px;
+  box-shadow:
+    0 18px 42px rgba(0, 0, 0, 0.5),
+    0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
 .selected-image {
   box-shadow:
     0 24px 56px rgba(0, 0, 0, 0.62),

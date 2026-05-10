@@ -93,7 +93,7 @@ pub fn prioritized_jobs(
         });
     }
 
-    for index in neighbor_indexes(items.len(), selected) {
+    for index in nearby_indexes(items.len(), selected, 3) {
         let item = &items[index];
         jobs.push(PreviewJob {
             source: item.path.clone(),
@@ -104,7 +104,7 @@ pub fn prioritized_jobs(
     }
 
     if animate_live {
-        for index in neighbor_indexes(items.len(), selected) {
+        for index in nearby_indexes(items.len(), selected, 3) {
             let item = &items[index];
             if item.is_live() {
                 jobs.push(PreviewJob {
@@ -120,21 +120,21 @@ pub fn prioritized_jobs(
     jobs
 }
 
-pub fn display_path(item: &WallpaperItem, selected: bool, animate_live: bool) -> PathBuf {
+pub fn display_path(item: &WallpaperItem, selected: bool, animate_live: bool) -> Option<PathBuf> {
     let profile = PreviewProfile::default();
     if selected && animate_live && item.is_live() {
         let animated = animated_path(&item.path, profile);
         if animated.exists() {
-            return animated;
+            return Some(animated);
         }
     }
 
     let poster = poster_path(&item.path, profile);
     if poster.exists() {
-        return poster;
+        return Some(poster);
     }
 
-    item.path.clone()
+    None
 }
 
 pub fn generate(job: &PreviewJob) -> Result<()> {
@@ -190,12 +190,25 @@ pub fn generate(job: &PreviewJob) -> Result<()> {
     Ok(())
 }
 
-fn neighbor_indexes(len: usize, selected: usize) -> Vec<usize> {
-    match len {
-        0 | 1 => Vec::new(),
-        2 => vec![(selected + 1) % len],
-        _ => vec![(selected + len - 1) % len, (selected + 1) % len],
+fn nearby_indexes(len: usize, selected: usize, radius: usize) -> Vec<usize> {
+    if len < 2 || radius == 0 {
+        return Vec::new();
     }
+
+    let selected = selected % len;
+    let mut indexes = Vec::new();
+    for distance in 1..=radius.min(len - 1) {
+        for index in [
+            (selected + len - distance) % len,
+            (selected + distance) % len,
+        ] {
+            if !indexes.contains(&index) {
+                indexes.push(index);
+            }
+        }
+    }
+
+    indexes
 }
 
 fn cache_key(source: &Path, profile: PreviewProfile) -> String {
@@ -244,5 +257,27 @@ mod tests {
 
         let jobs = prioritized_jobs(&items, 0, PreviewProfile::default(), false);
         assert!(jobs.iter().all(|job| job.kind == PreviewKind::Poster));
+    }
+
+    #[test]
+    fn queues_full_visible_carousel_for_prewarming() {
+        let items: Vec<_> = (0..8)
+            .map(|index| WallpaperItem {
+                path: format!("/tmp/{index}.png").into(),
+                kind: MediaKind::Static,
+            })
+            .collect();
+
+        let jobs = prioritized_jobs(&items, 0, PreviewProfile::default(), false);
+        let sources: Vec<_> = jobs.iter().map(|job| job.source.as_path()).collect();
+
+        assert_eq!(jobs.len(), 7);
+        assert!(sources.contains(&Path::new("/tmp/0.png")));
+        assert!(sources.contains(&Path::new("/tmp/1.png")));
+        assert!(sources.contains(&Path::new("/tmp/2.png")));
+        assert!(sources.contains(&Path::new("/tmp/3.png")));
+        assert!(sources.contains(&Path::new("/tmp/5.png")));
+        assert!(sources.contains(&Path::new("/tmp/6.png")));
+        assert!(sources.contains(&Path::new("/tmp/7.png")));
     }
 }

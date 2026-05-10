@@ -514,22 +514,28 @@ fn retire_blocking_swaybg_for_live_preview(monitor: &str) {
 fn blocking_swaybg_pids(state_path: &Path, monitor: &str) -> Vec<u32> {
     let mut pids = Vec::new();
     if let Ok(Some(state)) = State::load(state_path) {
-        for (name, monitor_state) in &state.monitors {
-            if monitor != "all" && monitor != name {
-                continue;
-            }
-            if monitor_state.backend == Backend::Swaybg
-                && let Some(pid) = monitor_state.pid
-            {
-                pids.push(pid);
-            }
-        }
+        pids.extend(state_swaybg_pids_for_monitor(&state, monitor));
     }
 
     pids.extend(omarchy_swaybg_pids());
     pids.sort_unstable();
     pids.dedup();
     pids
+}
+
+fn state_swaybg_pids_for_monitor(state: &State, monitor: &str) -> Vec<u32> {
+    state
+        .monitors
+        .iter()
+        .filter_map(|(name, monitor_state)| {
+            if monitor != "all" && monitor != name {
+                return None;
+            }
+            (monitor_state.backend == Backend::Swaybg)
+                .then_some(monitor_state.pid)
+                .flatten()
+        })
+        .collect()
 }
 
 fn omarchy_swaybg_pids() -> Vec<u32> {
@@ -1018,6 +1024,13 @@ fn default_config_path() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state::MonitorState;
+    use std::{
+        collections::BTreeMap,
+        io::{BufRead, BufReader, Write},
+        os::unix::net::UnixListener,
+        thread,
+    };
 
     #[test]
     fn parses_only_omarchy_current_background_swaybg_pid() {
@@ -1041,5 +1054,114 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn state_swaybg_pids_filter_by_monitor_and_backend() {
+        let state = State {
+            version: 1,
+            active_backend: Backend::Swaybg,
+            mode: MediaKind::Static,
+            wallpaper: "/tmp/a.png".to_string(),
+            monitors: BTreeMap::from([
+                (
+                    "DP-1".to_string(),
+                    MonitorState {
+                        backend: Backend::Swaybg,
+                        wallpaper: "/tmp/a.png".to_string(),
+                        pid: Some(101),
+                    },
+                ),
+                (
+                    "DP-2".to_string(),
+                    MonitorState {
+                        backend: Backend::Mpvpaper,
+                        wallpaper: "/tmp/b.mp4".to_string(),
+                        pid: Some(202),
+                    },
+                ),
+                (
+                    "HDMI-A-1".to_string(),
+                    MonitorState {
+                        backend: Backend::Swaybg,
+                        wallpaper: "/tmp/c.png".to_string(),
+                        pid: None,
+                    },
+                ),
+            ]),
+            collections: BTreeMap::new(),
+            last_command: None,
+            updated_at: time::OffsetDateTime::UNIX_EPOCH,
+        };
+
+        assert_eq!(state_swaybg_pids_for_monitor(&state, "DP-1"), vec![101]);
+        assert_eq!(
+            state_swaybg_pids_for_monitor(&state, "DP-2"),
+            Vec::<u32>::new()
+        );
+        assert_eq!(state_swaybg_pids_for_monitor(&state, "all"), vec![101]);
+    }
+
+    #[test]
+    fn mpvpaper_preview_ipc_socket_sanitizes_monitor_name() {
+        let plan = SetPlan {
+            wallpaper: PathBuf::from("/tmp/live.mp4"),
+            media_kind: MediaKind::Live,
+            backend: Backend::Mpvpaper,
+            monitor: "DP-1:bad/name".to_string(),
+        };
+
+        let path = mpvpaper_preview_ipc_socket(&plan);
+        let file_name = path.file_name().unwrap().to_string_lossy();
+
+        assert!(file_name.starts_with("jobowalls-shell-mpvpaper-"));
+        assert!(file_name.contains("-DP-1_bad_name-"));
+        assert!(!file_name.contains(':'));
+        assert!(!file_name.contains('/'));
+    }
+
+    #[test]
+    fn query_preview_mpv_video_output_reports_ready_when_data_is_present() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("mpv.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = String::new();
+            BufReader::new(stream.try_clone().unwrap())
+                .read_line(&mut request)
+                .unwrap();
+            assert!(request.contains("video-out-params"));
+            writeln!(
+                stream,
+                r#"{{"request_id":1,"error":"success","data":{{"w":1920,"h":1080}}}}"#
+            )
+            .unwrap();
+        });
+
+        assert_eq!(query_preview_mpv_video_output(&socket), Ok(true));
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn query_preview_mpv_video_output_reports_not_ready_when_data_is_null() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("mpv.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = String::new();
+            BufReader::new(stream.try_clone().unwrap())
+                .read_line(&mut request)
+                .unwrap();
+            writeln!(
+                stream,
+                r#"{{"request_id":1,"error":"success","data":null}}"#
+            )
+            .unwrap();
+        });
+
+        assert_eq!(query_preview_mpv_video_output(&socket), Ok(false));
+        server.join().unwrap();
     }
 }

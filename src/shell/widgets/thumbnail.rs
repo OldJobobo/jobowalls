@@ -62,18 +62,6 @@ pub fn build(
     root.set_height_request(allocation_height);
 
     if let Some(item) = item {
-        let selected = role == ThumbnailRole::Selected;
-        let display_path = preview::display_path(item, selected, animate_live);
-        let image = gtk::Picture::for_filename(display_path);
-        image.add_css_class("thumb-image");
-        if selected {
-            image.add_css_class("selected-image");
-        }
-        image.set_can_shrink(true);
-        image.set_content_fit(gtk::ContentFit::Cover);
-        image.set_width_request(width);
-        image.set_height_request(height);
-
         let overlay = gtk::Overlay::new();
         overlay.set_width_request(width);
         overlay.set_height_request(height);
@@ -81,7 +69,25 @@ pub fn build(
         overlay.set_margin_end(SHADOW_PAD_X);
         overlay.set_margin_top(SHADOW_PAD_TOP);
         overlay.set_margin_bottom(SHADOW_PAD_BOTTOM);
-        overlay.set_child(Some(&image));
+        let selected = role == ThumbnailRole::Selected;
+        if let Some(display_path) = preview::display_path(item, selected, animate_live) {
+            let image = gtk::Picture::for_filename(display_path);
+            image.add_css_class("thumb-image");
+            if selected {
+                image.add_css_class("selected-image");
+            }
+            image.set_can_shrink(true);
+            image.set_content_fit(gtk::ContentFit::Cover);
+            image.set_width_request(width);
+            image.set_height_request(height);
+            overlay.set_child(Some(&image));
+        } else {
+            let placeholder = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            placeholder.add_css_class("thumb-placeholder");
+            placeholder.set_width_request(width);
+            placeholder.set_height_request(height);
+            overlay.set_child(Some(&placeholder));
+        }
 
         if item.is_live() {
             let badge = gtk::Label::new(Some("\u{f0230}"));
