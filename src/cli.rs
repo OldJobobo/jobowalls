@@ -1650,6 +1650,75 @@ mod tests {
     }
 
     #[test]
+    fn owned_live_pids_filter_by_monitor_and_backend() {
+        let live_plan = SetPlan {
+            wallpaper: PathBuf::from("/tmp/rain.mp4"),
+            media_kind: MediaKind::Live,
+            backend: Backend::Mpvpaper,
+            monitor: "all".to_string(),
+        };
+        let mut state = State::from_monitor_entries(
+            &live_plan,
+            [
+                ("DP-1".to_string(), Some(100)),
+                ("HDMI-A-1".to_string(), Some(101)),
+            ],
+        );
+        state.monitors.insert(
+            "DP-3".to_string(),
+            crate::state::MonitorState {
+                backend: Backend::Swaybg,
+                wallpaper: "/tmp/wall.png".to_string(),
+                pid: Some(200),
+            },
+        );
+
+        assert_eq!(
+            owned_live_pids_for_monitors(&state, &["DP-1".to_string()]),
+            [100]
+        );
+        assert_eq!(
+            owned_live_pids_for_monitors(&state, &["all".to_string()]),
+            [100, 101]
+        );
+    }
+
+    #[test]
+    fn owned_swaybg_pids_filter_by_monitor_backend_and_deduplicate() {
+        let static_plan = SetPlan {
+            wallpaper: PathBuf::from("/tmp/wall.png"),
+            media_kind: MediaKind::Static,
+            backend: Backend::Swaybg,
+            monitor: "all".to_string(),
+        };
+        let mut state = State::from_monitor_entries(
+            &static_plan,
+            [
+                ("DP-1".to_string(), Some(200)),
+                ("HDMI-A-1".to_string(), Some(200)),
+                ("DP-3".to_string(), Some(201)),
+            ],
+        );
+        state.monitors.insert(
+            "DP-4".to_string(),
+            crate::state::MonitorState {
+                backend: Backend::Mpvpaper,
+                wallpaper: "/tmp/rain.mp4".to_string(),
+                pid: Some(300),
+            },
+        );
+
+        assert_eq!(
+            owned_swaybg_pids_for_monitors(&state, &["DP-1".to_string(), "HDMI-A-1".to_string()]),
+            [200]
+        );
+        assert_eq!(
+            owned_swaybg_pids_for_monitors(&state, &["all".to_string()]),
+            [200, 201]
+        );
+    }
+
+    #[test]
     fn restore_profile_plans_use_active_monitor_profiles() {
         let dir = tempfile::tempdir().unwrap();
         let wallpaper = dir.path().join("wall.png");

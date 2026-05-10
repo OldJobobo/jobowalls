@@ -19,6 +19,16 @@ pub fn names() -> Result<Vec<String>> {
             if !names.is_empty() {
                 return Ok(names);
             }
+
+            let hyprctl_text = CommandSpec::new("hyprctl", ["monitors".into()]);
+            if let Ok(output) =
+                output_text_with_retries(&hyprctl_text, 3, Duration::from_millis(75))
+            {
+                let names = parse_hyprctl_monitor_text(&output);
+                if !names.is_empty() {
+                    return Ok(names);
+                }
+            }
         }
         Err(hyprctl_json_error) => {
             let hyprctl_text = CommandSpec::new("hyprctl", ["monitors".into()]);
