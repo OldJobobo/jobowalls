@@ -1,5 +1,5 @@
 use crate::{
-    backends::{model::Backend, mpvpaper},
+    backends::{model::Backend, mpvpaper, swaybg},
     command::{pid_is_running, signal_pid, terminate_pid},
     config::Config,
     media::MediaKind,
@@ -19,9 +19,13 @@ use crate::{
 use anyhow::Result;
 use clap::Parser;
 use gtk::{gdk, glib, prelude::*};
+use serde_json::json;
 use std::{
     cell::RefCell,
     collections::HashSet,
+    fs,
+    io::{BufRead, BufReader, Write},
+    os::unix::net::UnixStream,
     path::{Path, PathBuf},
     process::Command,
     rc::Rc,
@@ -30,9 +34,11 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-const NAV_ANIMATION_FRAMES: u8 = 10;
+const NAV_ANIMATION_FRAMES: u8 = 0;
 const STATIC_DESKTOP_PREVIEW_DEBOUNCE_MS: u64 = 120;
-const LIVE_DESKTOP_PREVIEW_DEBOUNCE_MS: u64 = 520;
+const LIVE_DESKTOP_PREVIEW_DEBOUNCE_MS: u64 = 220;
+const STATIC_PREVIEW_SETTLE_MS: u64 = 220;
+const RETIRED_PREVIEW_CLEANUP_DELAY_MS: u64 = 450;
 
 pub fn run() -> Result<()> {
     let args = ShellArgs::parse();
@@ -176,11 +182,7 @@ fn build_ui(
     schedule_desktop_preview(&state);
     window.present();
     window.present_with_time(0);
-    let window_for_focus = window.clone();
-    glib::idle_add_local_once(move || {
-        window_for_focus.present();
-        window_for_focus.grab_focus();
-    });
+    request_window_focus(&window);
     Ok(())
 }
 
@@ -218,7 +220,40 @@ fn render(window: &gtk::ApplicationWindow, state: Rc<RefCell<AppState>>) {
     install_keys_on(&root, window, state.clone());
     install_pointer_controls_on(&root, window, state.clone());
     window.set_child(Some(&root));
-    root.grab_focus();
+    request_widget_focus(&root);
+}
+
+fn request_window_focus(window: &gtk::ApplicationWindow) {
+    let window_for_idle = window.clone();
+    glib::idle_add_local_once(move || {
+        window_for_idle.present();
+        window_for_idle.grab_focus();
+    });
+
+    for delay_ms in [50, 150, 300] {
+        let window_for_timeout = window.clone();
+        glib::timeout_add_local_once(Duration::from_millis(delay_ms), move || {
+            window_for_timeout.present();
+            window_for_timeout.grab_focus();
+        });
+    }
+}
+
+fn request_widget_focus<W>(widget: &W)
+where
+    W: IsA<gtk::Widget>,
+{
+    let widget_for_idle = widget.clone().upcast::<gtk::Widget>();
+    glib::idle_add_local_once(move || {
+        widget_for_idle.grab_focus();
+    });
+
+    for delay_ms in [50, 150, 300] {
+        let widget_for_timeout = widget.clone().upcast::<gtk::Widget>();
+        glib::timeout_add_local_once(Duration::from_millis(delay_ms), move || {
+            widget_for_timeout.grab_focus();
+        });
+    }
 }
 
 fn queue_preview_jobs(state: &mut AppState) {
@@ -248,14 +283,13 @@ fn spawn_desktop_preview_worker(
 ) {
     thread::spawn(move || {
         let mut live_preview_pid = None;
+        let mut static_preview_pid = None;
         'worker: while let Ok(request) = request_rx.recv() {
             let mut request = match request {
-                DesktopPreviewRequest::Preview(request) => {
-                    stop_live_preview(&mut live_preview_pid);
-                    *request
-                }
+                DesktopPreviewRequest::Preview(request) => *request,
                 DesktopPreviewRequest::Stop(done_tx) => {
                     stop_live_preview(&mut live_preview_pid);
+                    stop_static_preview(&mut static_preview_pid);
                     let _ = done_tx.send(());
                     continue 'worker;
                 }
@@ -264,11 +298,11 @@ fn spawn_desktop_preview_worker(
             loop {
                 match request_rx.recv_timeout(Duration::from_millis(request.debounce_ms)) {
                     Ok(DesktopPreviewRequest::Preview(next)) => {
-                        stop_live_preview(&mut live_preview_pid);
                         request = *next;
                     }
                     Ok(DesktopPreviewRequest::Stop(done_tx)) => {
                         stop_live_preview(&mut live_preview_pid);
+                        stop_static_preview(&mut static_preview_pid);
                         let _ = done_tx.send(());
                         continue 'worker;
                     }
@@ -278,14 +312,13 @@ fn spawn_desktop_preview_worker(
             }
 
             let result = if request.is_live {
-                apply_fast_live_preview(&request, &mut live_preview_pid)
+                apply_fast_live_preview(&request, &mut live_preview_pid, &mut static_preview_pid)
             } else {
-                apply_wallpaper(&request.path, &request.monitor).map_err(|error| {
-                    format!(
-                        "desktop preview failed for {}: {error}",
-                        request.path.display()
-                    )
-                })
+                apply_static_desktop_preview(
+                    &request,
+                    &mut live_preview_pid,
+                    &mut static_preview_pid,
+                )
             };
             let _ = result_tx.send(DesktopPreviewResult {
                 path: request.path,
@@ -294,24 +327,74 @@ fn spawn_desktop_preview_worker(
             });
         }
         stop_live_preview(&mut live_preview_pid);
+        stop_static_preview(&mut static_preview_pid);
     });
+}
+
+fn apply_static_desktop_preview(
+    request: &DesktopPreviewJob,
+    live_preview_pid: &mut Option<u32>,
+    static_preview_pid: &mut Option<u32>,
+) -> std::result::Result<(), String> {
+    let plan = SetPlan {
+        wallpaper: request.path.clone(),
+        media_kind: MediaKind::Static,
+        backend: Backend::Swaybg,
+        monitor: request.monitor.clone(),
+    };
+    let command = swaybg::start_command(&plan);
+    match command.spawn_detached() {
+        Ok(pid) => {
+            thread::sleep(Duration::from_millis(STATIC_PREVIEW_SETTLE_MS));
+            if !pid_is_running(pid) {
+                return Err(format!(
+                    "desktop preview failed for {}: swaybg exited before settling",
+                    request.path.display()
+                ));
+            }
+            retire_live_preview(live_preview_pid);
+            retire_static_preview(static_preview_pid);
+            retire_blocking_swaybg_for_live_preview(&request.monitor);
+            *static_preview_pid = Some(pid);
+            Ok(())
+        }
+        Err(error) => Err(format!(
+            "desktop preview failed for {}: {error}",
+            request.path.display()
+        )),
+    }
 }
 
 fn apply_fast_live_preview(
     request: &DesktopPreviewJob,
     live_preview_pid: &mut Option<u32>,
+    static_preview_pid: &mut Option<u32>,
 ) -> std::result::Result<(), String> {
-    stop_live_preview(live_preview_pid);
-    stop_blocking_swaybg_for_live_preview(&request.monitor);
     let plan = SetPlan {
         wallpaper: request.path.clone(),
         media_kind: MediaKind::Live,
         backend: Backend::Mpvpaper,
         monitor: request.monitor.clone(),
     };
-    let command = mpvpaper::start_command(&plan, &request.config.mpvpaper);
+    let ipc_socket = mpvpaper_preview_ipc_socket(&plan);
+    remove_stale_preview_socket(&ipc_socket)?;
+    let command = mpvpaper::start_command_with_ipc(&plan, &request.config.mpvpaper, &ipc_socket);
     match command.spawn_detached() {
         Ok(pid) => {
+            if let Err(error) = wait_for_preview_mpvpaper_readiness(
+                pid,
+                &ipc_socket,
+                request.config.mpvpaper.readiness_timeout_ms,
+            ) {
+                let _ = terminate_pid(pid);
+                return Err(format!(
+                    "desktop preview failed for {}: {error}",
+                    request.path.display()
+                ));
+            }
+            stop_live_preview(live_preview_pid);
+            retire_static_preview(static_preview_pid);
+            retire_blocking_swaybg_for_live_preview(&request.monitor);
             *live_preview_pid = Some(pid);
             Ok(())
         }
@@ -322,9 +405,109 @@ fn apply_fast_live_preview(
     }
 }
 
-fn stop_blocking_swaybg_for_live_preview(monitor: &str) {
+fn mpvpaper_preview_ipc_socket(plan: &SetPlan) -> PathBuf {
+    let monitor = plan
+        .monitor
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+
+    std::env::temp_dir().join(format!(
+        "jobowalls-shell-mpvpaper-{}-{monitor}-{now}.sock",
+        std::process::id()
+    ))
+}
+
+fn remove_stale_preview_socket(path: &Path) -> std::result::Result<(), String> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!(
+            "failed to remove stale mpv IPC socket {}: {error}",
+            path.display()
+        )),
+    }
+}
+
+fn wait_for_preview_mpvpaper_readiness(
+    pid: u32,
+    ipc_socket: &Path,
+    timeout_ms: u64,
+) -> std::result::Result<(), String> {
+    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+
+    loop {
+        if !pid_is_running(pid) {
+            return Err(format!(
+                "mpvpaper pid {pid} exited before reporting readiness"
+            ));
+        }
+
+        match query_preview_mpv_video_output(ipc_socket) {
+            Ok(true) => return Ok(()),
+            Ok(false) => {}
+            Err(error) if Instant::now() < deadline => {
+                let _ = error;
+            }
+            Err(error) => {
+                return Err(format!(
+                    "failed to query mpv IPC {}: {error}",
+                    ipc_socket.display()
+                ));
+            }
+        }
+
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "timed out waiting for mpv video output on pid {pid}"
+            ));
+        }
+
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
+fn query_preview_mpv_video_output(ipc_socket: &Path) -> std::result::Result<bool, String> {
+    let mut stream = UnixStream::connect(ipc_socket).map_err(|error| error.to_string())?;
+    stream
+        .set_read_timeout(Some(Duration::from_millis(200)))
+        .map_err(|error| error.to_string())?;
+    stream
+        .set_write_timeout(Some(Duration::from_millis(200)))
+        .map_err(|error| error.to_string())?;
+    let request = json!({
+        "command": ["get_property", "video-out-params"],
+        "request_id": 1,
+    });
+    writeln!(stream, "{request}").map_err(|error| error.to_string())?;
+
+    let mut response = String::new();
+    BufReader::new(stream)
+        .read_line(&mut response)
+        .map_err(|error| error.to_string())?;
+
+    let response: serde_json::Value =
+        serde_json::from_str(&response).map_err(|error| error.to_string())?;
+    if response.get("error").and_then(|error| error.as_str()) != Some("success") {
+        return Ok(false);
+    }
+
+    Ok(!response.get("data").is_none_or(|data| data.is_null()))
+}
+
+fn retire_blocking_swaybg_for_live_preview(monitor: &str) {
     for pid in blocking_swaybg_pids(&runtime_state_path(), monitor) {
-        terminate_preview_blocker(pid);
+        retire_preview_blocker(pid);
     }
 }
 
@@ -396,6 +579,31 @@ fn stop_live_preview(live_preview_pid: &mut Option<u32>) {
     }
 }
 
+fn retire_live_preview(live_preview_pid: &mut Option<u32>) {
+    if let Some(pid) = live_preview_pid.take() {
+        retire_preview_blocker(pid);
+    }
+}
+
+fn stop_static_preview(static_preview_pid: &mut Option<u32>) {
+    if let Some(pid) = static_preview_pid.take() {
+        terminate_preview_blocker(pid);
+    }
+}
+
+fn retire_static_preview(static_preview_pid: &mut Option<u32>) {
+    if let Some(pid) = static_preview_pid.take() {
+        retire_preview_blocker(pid);
+    }
+}
+
+fn retire_preview_blocker(pid: u32) {
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(RETIRED_PREVIEW_CLEANUP_DELAY_MS));
+        terminate_preview_blocker(pid);
+    });
+}
+
 fn terminate_preview_blocker(pid: u32) {
     let _ = terminate_pid(pid);
     let deadline = Instant::now() + Duration::from_millis(500);
@@ -455,9 +663,6 @@ fn install_desktop_preview_poll(
                 Ok(()) => {
                     state.active_wallpaper = Some(result.path.clone());
                     state.current_preview_wallpaper = Some(result.path);
-                    if state.status.as_deref() == Some("Previewing...") {
-                        state.status = None;
-                    }
                 }
                 Err(error) => {
                     state.status = Some(error);
@@ -516,11 +721,13 @@ where
         gdk::Key::Left | gdk::Key::h | gdk::Key::H => {
             move_selection(&state, -1);
             render(&window_for_keys, state.clone());
+            schedule_desktop_preview_idle(state.clone());
             glib::Propagation::Stop
         }
         gdk::Key::Right | gdk::Key::l | gdk::Key::L => {
             move_selection(&state, 1);
             render(&window_for_keys, state.clone());
+            schedule_desktop_preview_idle(state.clone());
             glib::Propagation::Stop
         }
         gdk::Key::Return | gdk::Key::KP_Enter => {
@@ -535,6 +742,7 @@ where
         gdk::Key::s | gdk::Key::S => {
             shuffle_selection(&state);
             render(&window_for_keys, state.clone());
+            schedule_desktop_preview_idle(state.clone());
             glib::Propagation::Stop
         }
         _ => glib::Propagation::Proceed,
@@ -564,6 +772,7 @@ fn install_pointer_controls_on<W>(
             move_selection(&state_for_scroll, 1);
         }
         render(&window_for_scroll, state_for_scroll.clone());
+        schedule_desktop_preview_idle(state_for_scroll.clone());
         glib::Propagation::Stop
     });
     target.add_controller(scroll);
@@ -581,9 +790,11 @@ fn install_pointer_controls_on<W>(
         if x < width / 3.0 {
             move_selection(&state, -1);
             render(&window_for_click, state.clone());
+            schedule_desktop_preview_idle(state.clone());
         } else if x > width * 2.0 / 3.0 {
             move_selection(&state, 1);
             render(&window_for_click, state.clone());
+            schedule_desktop_preview_idle(state.clone());
         }
     });
     target.add_controller(click);
@@ -614,8 +825,6 @@ fn move_selection(app_state: &Rc<RefCell<AppState>>, delta: isize) {
     let selected = state.selected;
     state.shell_state.remember(&folder, &monitor, selected);
     let _ = state.shell_state.save(&state.shell_state_path);
-    drop(state);
-    schedule_desktop_preview(app_state);
 }
 
 fn shuffle_selection(app_state: &Rc<RefCell<AppState>>) {
@@ -641,14 +850,12 @@ fn shuffle_selection(app_state: &Rc<RefCell<AppState>>) {
     let monitor = state.args.monitor.clone();
     state.shell_state.remember(&folder, &monitor, selected);
     let _ = state.shell_state.save(&state.shell_state_path);
-    drop(state);
-    schedule_desktop_preview(app_state);
 }
 
 fn start_navigation_animation(state: &mut AppState, previous: usize, delta: isize) {
-    state.animation_frame = NAV_ANIMATION_FRAMES;
-    state.animation_direction = if delta < 0 { -1 } else { 1 };
-    state.previous_selected = Some(previous);
+    let _ = (previous, delta);
+    state.animation_frame = 0;
+    state.previous_selected = None;
 }
 
 fn apply_selected(state: &Rc<RefCell<AppState>>, window: &gtk::ApplicationWindow) {
@@ -707,7 +914,6 @@ fn schedule_desktop_preview(state: &Rc<RefCell<AppState>>) {
 
         state.desktop_preview_generation += 1;
         let generation = state.desktop_preview_generation;
-        state.status = Some("Previewing...".to_string());
         DesktopPreviewRequest::Preview(Box::new(DesktopPreviewJob {
             path,
             monitor: state.args.monitor.clone(),
@@ -719,6 +925,12 @@ fn schedule_desktop_preview(state: &Rc<RefCell<AppState>>) {
     };
 
     let _ = state.borrow().desktop_request_tx.send(request);
+}
+
+fn schedule_desktop_preview_idle(state: Rc<RefCell<AppState>>) {
+    glib::idle_add_local_once(move || {
+        schedule_desktop_preview(&state);
+    });
 }
 
 fn restore_original_and_close(state: &Rc<RefCell<AppState>>, window: &gtk::ApplicationWindow) {

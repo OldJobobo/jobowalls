@@ -14,8 +14,6 @@
 
 .thumb {
   background: transparent;
-  border: 0 solid transparent;
-  border-bottom: 2px solid transparent;
   border-radius: 0;
   color: #ece8df;
 }
@@ -35,16 +33,11 @@
 }
 
 .selected {
-  border-bottom-color: #d8a74f;
   opacity: 1;
 }
 
 .top-card {
   opacity: 1;
-}
-
-.active {
-  border-bottom-color: #75c7a1;
 }
 
 .live-badge {
