@@ -22,7 +22,8 @@ use gtk::{gdk, glib, prelude::*};
 use std::{
     cell::RefCell,
     collections::HashSet,
-    path::PathBuf,
+    path::{Path, PathBuf},
+    process::Command,
     rc::Rc,
     sync::mpsc::{self, Receiver, RecvTimeoutError, Sender},
     thread,
@@ -283,6 +284,7 @@ fn apply_fast_live_preview(
     live_preview_pid: &mut Option<u32>,
 ) -> std::result::Result<(), String> {
     stop_live_preview(live_preview_pid);
+    stop_blocking_swaybg_for_live_preview(&request.monitor);
     let plan = SetPlan {
         wallpaper: request.path.clone(),
         media_kind: MediaKind::Live,
@@ -302,16 +304,90 @@ fn apply_fast_live_preview(
     }
 }
 
+fn stop_blocking_swaybg_for_live_preview(monitor: &str) {
+    for pid in blocking_swaybg_pids(&runtime_state_path(), monitor) {
+        terminate_preview_blocker(pid);
+    }
+}
+
+fn blocking_swaybg_pids(state_path: &Path, monitor: &str) -> Vec<u32> {
+    let mut pids = Vec::new();
+    if let Ok(Some(state)) = State::load(state_path) {
+        for (name, monitor_state) in &state.monitors {
+            if monitor != "all" && monitor != name {
+                continue;
+            }
+            if monitor_state.backend == Backend::Swaybg
+                && let Some(pid) = monitor_state.pid
+            {
+                pids.push(pid);
+            }
+        }
+    }
+
+    pids.extend(omarchy_swaybg_pids());
+    pids.sort_unstable();
+    pids.dedup();
+    pids
+}
+
+fn omarchy_swaybg_pids() -> Vec<u32> {
+    let Ok(output) = Command::new("ps")
+        .args(["-eo", "pid=", "-o", "args="])
+        .output()
+    else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+
+    let home = dirs::home_dir();
+    let output = String::from_utf8_lossy(&output.stdout);
+    output
+        .lines()
+        .filter_map(|line| parse_omarchy_swaybg_pid(line, home.as_deref()))
+        .collect()
+}
+
+fn parse_omarchy_swaybg_pid(line: &str, home: Option<&Path>) -> Option<u32> {
+    let line = line.trim();
+    let (pid, command) = line.split_once(char::is_whitespace)?;
+    let pid = pid.parse().ok()?;
+    if !command
+        .split_whitespace()
+        .next()
+        .is_some_and(|program| program.ends_with("swaybg"))
+    {
+        return None;
+    }
+    if !command.split_whitespace().any(|arg| arg == "-i") {
+        return None;
+    }
+
+    let Some(home) = home else {
+        return None;
+    };
+    let omarchy_background = home.join(".config/omarchy/current/background");
+    command
+        .contains(&omarchy_background.display().to_string())
+        .then_some(pid)
+}
+
 fn stop_live_preview(live_preview_pid: &mut Option<u32>) {
     if let Some(pid) = live_preview_pid.take() {
-        let _ = terminate_pid(pid);
-        let deadline = Instant::now() + Duration::from_millis(500);
-        while pid_is_running(pid) && Instant::now() < deadline {
-            thread::sleep(Duration::from_millis(25));
-        }
-        if pid_is_running(pid) {
-            let _ = signal_pid(pid, "KILL");
-        }
+        terminate_preview_blocker(pid);
+    }
+}
+
+fn terminate_preview_blocker(pid: u32) {
+    let _ = terminate_pid(pid);
+    let deadline = Instant::now() + Duration::from_millis(500);
+    while pid_is_running(pid) && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(25));
+    }
+    if pid_is_running(pid) {
+        let _ = signal_pid(pid, "KILL");
     }
 }
 
@@ -687,4 +763,33 @@ fn default_config_path() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
         .join("jobowalls")
         .join("config.toml")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_only_omarchy_current_background_swaybg_pid() {
+        let home = Path::new("/home/tester");
+
+        assert_eq!(
+            parse_omarchy_swaybg_pid(
+                "2106 /usr/bin/swaybg -i /home/tester/.config/omarchy/current/background -m fill",
+                Some(home),
+            ),
+            Some(2106)
+        );
+        assert_eq!(
+            parse_omarchy_swaybg_pid("2107 /usr/bin/swaybg -i /tmp/other.jpg -m fill", Some(home)),
+            None
+        );
+        assert_eq!(
+            parse_omarchy_swaybg_pid(
+                "2108 /usr/bin/mpvpaper all /home/tester/.config/omarchy/current/background",
+                Some(home),
+            ),
+            None
+        );
+    }
 }
