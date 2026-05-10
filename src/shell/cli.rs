@@ -4,6 +4,7 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Parser)]
 #[command(
     name = "jobowalls-shell",
+    version,
     about = "Compact layer-shell wallpaper picker for JoboWalls"
 )]
 pub struct ShellArgs {
@@ -18,12 +19,12 @@ pub struct ShellArgs {
     #[arg(long, value_enum, default_value_t = ShellPosition::Bottom)]
     pub position: ShellPosition,
 
-    /// Overlay width in pixels.
-    #[arg(long, default_value_t = 860)]
+    /// Debug window width in pixels.
+    #[arg(long, default_value_t = 0)]
     pub width: i32,
 
     /// Overlay height in pixels.
-    #[arg(long, default_value_t = 190)]
+    #[arg(long, default_value_t = 340)]
     pub height: i32,
 
     /// Disable applying the selected wallpaper to the desktop while browsing.

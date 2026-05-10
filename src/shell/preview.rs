@@ -19,9 +19,9 @@ pub struct PreviewProfile {
 impl Default for PreviewProfile {
     fn default() -> Self {
         Self {
-            static_width: 1080,
-            animated_width: 1080,
-            animated_fps: 16,
+            static_width: 480,
+            animated_width: 480,
+            animated_fps: 10,
             animated_duration_secs: 3,
         }
     }

@@ -5,7 +5,7 @@ use crate::shell::{
 use gtk::prelude::*;
 use std::{collections::BTreeSet, path::Path};
 
-const STAGE_WIDTH: i32 = 860;
+pub const STAGE_WIDTH: i32 = 860;
 const STAGE_HEIGHT: i32 = 204;
 const SLOT_CENTERS: [(isize, f64); 7] = [
     (-3, 42.0),

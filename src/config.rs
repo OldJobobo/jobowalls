@@ -7,22 +7,17 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum StaticBackendPreference {
+    #[default]
     Auto,
     Hyprpaper,
     Awww,
     Swaybg,
 }
 
-impl Default for StaticBackendPreference {
-    fn default() -> Self {
-        Self::Auto
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct Config {
     pub general: GeneralConfig,
@@ -31,19 +26,6 @@ pub struct Config {
     pub hyprpaper: HyprpaperConfig,
     pub mpvpaper: MpvpaperConfig,
     pub awww: AwwwConfig,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            general: GeneralConfig::default(),
-            monitors: MonitorConfig::default(),
-            live: LiveConfig::default(),
-            hyprpaper: HyprpaperConfig::default(),
-            mpvpaper: MpvpaperConfig::default(),
-            awww: AwwwConfig::default(),
-        }
-    }
 }
 
 impl Config {
@@ -141,20 +123,15 @@ impl Default for MonitorProfileConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum BackendPreference {
+    #[default]
     Auto,
     Hyprpaper,
     Mpvpaper,
     Awww,
     Swaybg,
-}
-
-impl Default for BackendPreference {
-    fn default() -> Self {
-        Self::Auto
-    }
 }
 
 impl BackendPreference {

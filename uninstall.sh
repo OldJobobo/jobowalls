@@ -19,6 +19,7 @@ Environment:
 
 Removes:
   \$BINDIR/jobowalls
+  \$BINDIR/jobowalls-shell
   \$BINDIR/jobowalls-gui
   \$APPDIR/dev.jobowalls.picker.desktop
 EOF
@@ -32,6 +33,7 @@ fi
 removed=0
 for path in \
   "$BINDIR/jobowalls" \
+  "$BINDIR/jobowalls-shell" \
   "$BINDIR/jobowalls-gui" \
   "$BINDIR/jobowalls-gui-bin" \
   "$APPDIR/dev.jobowalls.picker.desktop"

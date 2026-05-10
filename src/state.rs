@@ -244,10 +244,7 @@ impl State {
     ) {
         let collection = collection.display().to_string();
         let wallpaper = wallpaper.display().to_string();
-        let entry = self
-            .collections
-            .entry(collection)
-            .or_insert_with(CollectionState::default);
+        let entry = self.collections.entry(collection).or_default();
 
         entry.last_index = Some(index);
         entry.last_wallpaper = Some(wallpaper.clone());

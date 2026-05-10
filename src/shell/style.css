@@ -34,18 +34,6 @@
     0 0 24px rgba(216, 167, 79, 0.18);
 }
 
-.neighbor {
-  opacity: 0.76;
-}
-
-.far-neighbor {
-  opacity: 0.52;
-}
-
-.outer-neighbor {
-  opacity: 0.34;
-}
-
 .selected {
   border-bottom-color: #d8a74f;
   opacity: 1;

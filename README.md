@@ -9,9 +9,10 @@ It chooses the right backend underneath:
 - `mpvpaper` for live/video wallpapers
 - optional `awww` support for static image transitions
 
-The repo also includes `jobowalls-gui`, a minimal Tauri film-roll picker that
-lets you visually browse a folder, preview wallpapers, and apply the selected
-wallpaper through the `jobowalls` CLI.
+The repo also includes `jobowalls-gui`, a minimal Tauri film-roll picker, and
+`jobowalls-shell`, a compact GTK layer-shell picker for keyboard-driven desktop
+wallpaper switching. Both frontends apply wallpapers through the `jobowalls`
+CLI.
 
 ## Status
 
@@ -30,6 +31,7 @@ the package/install layout is being prepared for later AUR packaging.
 - Collection navigation with `next`, `previous`, and `shuffle`.
 - Restore support for the last recorded state.
 - Visual GUI picker with a film-roll strip and large preview.
+- Compact shell-layer picker with keyboard, mouse, and wheel navigation.
 - Live wallpaper preview animations in the GUI using cached generated previews.
 
 ## Requirements
@@ -84,6 +86,7 @@ This installs:
 
 ```text
 ~/.local/bin/jobowalls
+~/.local/bin/jobowalls-shell
 ~/.local/bin/jobowalls-gui
 ~/.local/share/applications/dev.jobowalls.picker.desktop
 ```
@@ -268,6 +271,42 @@ Escape         close picker
 The GUI does not manage wallpaper backends directly. It calls `jobowalls set`
 underneath, so backend choice and process ownership stay in the CLI.
 
+## Shell Picker
+
+Launch the compact shell-layer picker:
+
+```bash
+jobowalls-shell
+```
+
+Launch with a specific folder:
+
+```bash
+jobowalls-shell ~/Pictures/wallpapers
+```
+
+Useful options:
+
+```bash
+jobowalls-shell --monitor all ~/Pictures/wallpapers
+jobowalls-shell --no-live-preview ~/Pictures/wallpapers
+jobowalls-shell --debug-window ~/Pictures/wallpapers
+```
+
+Keyboard controls:
+
+```text
+Left / H       previous wallpaper
+Right / L      next wallpaper
+Enter          apply selected wallpaper and close
+S              shuffle selection
+R              rescan current folder
+Escape         restore original preview and close
+```
+
+Mouse wheel or trackpad scrolling moves the carousel. Clicking the left or
+right side moves selection, and double-clicking applies the selected wallpaper.
+
 ## Supported Wallpaper Types
 
 Static:
@@ -311,6 +350,12 @@ GUI state:
 ~/.local/state/jobowalls/gui.json
 ```
 
+Shell state:
+
+```text
+~/.local/state/jobowalls/shell.json
+```
+
 GUI preview cache:
 
 ```text
@@ -337,6 +382,12 @@ Run the GUI in development:
 cd gui
 npm install
 npm run tauri:dev
+```
+
+Run the shell picker in a normal debug window:
+
+```bash
+cargo run --bin jobowalls-shell -- --debug-window ~/Pictures/wallpapers
 ```
 
 Build the GUI frontend:
@@ -369,11 +420,12 @@ are not a submitted AUR package yet.
 ## Notes
 
 `jobowalls` is designed to avoid editing Hyprland or Omarchy config for normal
-wallpaper changes. If you want a keybind for the GUI picker, add one in your own
+wallpaper changes. If you want a keybind for a picker, add one in your own
 Hyprland config, for example:
 
 ```text
 bind = SUPER, W, exec, jobowalls-gui
+bind = SUPER CTRL ALT, SPACE, exec, jobowalls-shell
 ```
 
 The tool only stops live wallpaper processes that it recorded as owned in its

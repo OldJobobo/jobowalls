@@ -591,6 +591,7 @@ fn execute_set_plan(plan: &SetPlan, config: &Config, state_path: &std::path::Pat
             let target_monitors = target_monitor_names(plan, &monitors)?;
             stop_owned_swaybg_for_monitors(state_path, &target_monitors)?;
             stop_owned_live_for_monitors(state_path, &target_monitors)?;
+            terminate_pids(&omarchy_swaybg_pids())?;
 
             let pid = swaybg::start_command(plan).spawn_detached()?;
             let mut state = State::merged_with_monitor_entries(
@@ -1103,6 +1104,44 @@ fn stop_owned_swaybg_for_monitors(
     Ok(stopped)
 }
 
+fn omarchy_swaybg_pids() -> Vec<u32> {
+    let Ok(output) = CommandSpec::new(
+        "ps",
+        ["-eo".into(), "pid=".into(), "-o".into(), "args=".into()],
+    )
+    .output_text() else {
+        return Vec::new();
+    };
+
+    let home = dirs::home_dir();
+    output
+        .lines()
+        .filter_map(|line| parse_omarchy_swaybg_pid(line, home.as_deref()))
+        .collect()
+}
+
+fn parse_omarchy_swaybg_pid(line: &str, home: Option<&Path>) -> Option<u32> {
+    let line = line.trim();
+    let (pid, command) = line.split_once(char::is_whitespace)?;
+    let pid = pid.parse().ok()?;
+    if !command
+        .split_whitespace()
+        .next()
+        .is_some_and(|program| program.ends_with("swaybg"))
+    {
+        return None;
+    }
+    if !command.split_whitespace().any(|arg| arg == "-i") {
+        return None;
+    }
+
+    let home = home?;
+    let omarchy_background = home.join(".config/omarchy/current/background");
+    command
+        .contains(&omarchy_background.display().to_string())
+        .then_some(pid)
+}
+
 fn run_daemon(config: &Config, state_path: &std::path::Path, once: bool) -> Result<()> {
     loop {
         let decision = live_pause_decision(config);
@@ -1591,6 +1630,23 @@ mod tests {
 
         assert!(decision.pause);
         assert_eq!(decision.reasons, ["idle"]);
+    }
+
+    #[test]
+    fn parses_only_omarchy_current_background_swaybg_pid() {
+        let home = Path::new("/home/tester");
+
+        assert_eq!(
+            parse_omarchy_swaybg_pid(
+                "2106 /usr/bin/swaybg -i /home/tester/.config/omarchy/current/background -m fill",
+                Some(home),
+            ),
+            Some(2106)
+        );
+        assert_eq!(
+            parse_omarchy_swaybg_pid("2107 /usr/bin/swaybg -i /tmp/other.jpg -m fill", Some(home)),
+            None
+        );
     }
 
     #[test]

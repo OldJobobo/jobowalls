@@ -112,7 +112,7 @@ struct AppState {
 
 #[derive(Debug, Clone)]
 enum DesktopPreviewRequest {
-    Preview(DesktopPreviewJob),
+    Preview(Box<DesktopPreviewJob>),
     Stop(Sender<()>),
 }
 
@@ -142,15 +142,23 @@ fn build_ui(
     load_css();
 
     let args = state.borrow().args.clone();
+    let window_width = if args.width > 0 {
+        args.width
+    } else {
+        carousel::STAGE_WIDTH
+    };
     let window = gtk::ApplicationWindow::builder()
         .application(app)
         .title("JoboWalls Shell")
-        .default_width(args.width)
+        .default_width(window_width)
         .default_height(args.height)
         .focusable(true)
         .focus_on_click(true)
         .resizable(false)
         .build();
+    if args.debug_window {
+        window.set_default_size(window_width, args.height);
+    }
     window.add_css_class("shell-window");
     layer::configure(&window, &args);
 
@@ -168,6 +176,11 @@ fn build_ui(
     schedule_desktop_preview(&state);
     window.present();
     window.present_with_time(0);
+    let window_for_focus = window.clone();
+    glib::idle_add_local_once(move || {
+        window_for_focus.present();
+        window_for_focus.grab_focus();
+    });
     Ok(())
 }
 
@@ -177,6 +190,7 @@ fn render(window: &gtk::ApplicationWindow, state: Rc<RefCell<AppState>>) {
     root.add_css_class("shell-root");
     root.set_halign(gtk::Align::Center);
     root.set_valign(gtk::Align::Center);
+    root.set_focusable(true);
 
     if state_ref.items.is_empty() {
         root.append(&empty::build("No wallpapers found"));
@@ -195,12 +209,16 @@ fn render(window: &gtk::ApplicationWindow, state: Rc<RefCell<AppState>>) {
 
     let label = gtk::Label::new(state_ref.status.as_deref());
     label.add_css_class("status");
+    label.set_halign(gtk::Align::Center);
     label.set_wrap(true);
     label.set_width_request(520);
     label.set_height_request(18);
     root.append(&label);
 
+    install_keys_on(&root, window, state.clone());
+    install_pointer_controls_on(&root, window, state.clone());
     window.set_child(Some(&root));
+    root.grab_focus();
 }
 
 fn queue_preview_jobs(state: &mut AppState) {
@@ -234,7 +252,7 @@ fn spawn_desktop_preview_worker(
             let mut request = match request {
                 DesktopPreviewRequest::Preview(request) => {
                     stop_live_preview(&mut live_preview_pid);
-                    request
+                    *request
                 }
                 DesktopPreviewRequest::Stop(done_tx) => {
                     stop_live_preview(&mut live_preview_pid);
@@ -247,7 +265,7 @@ fn spawn_desktop_preview_worker(
                 match request_rx.recv_timeout(Duration::from_millis(request.debounce_ms)) {
                     Ok(DesktopPreviewRequest::Preview(next)) => {
                         stop_live_preview(&mut live_preview_pid);
-                        request = next;
+                        request = *next;
                     }
                     Ok(DesktopPreviewRequest::Stop(done_tx)) => {
                         stop_live_preview(&mut live_preview_pid);
@@ -365,9 +383,7 @@ fn parse_omarchy_swaybg_pid(line: &str, home: Option<&Path>) -> Option<u32> {
         return None;
     }
 
-    let Some(home) = home else {
-        return None;
-    };
+    let home = home?;
     let omarchy_background = home.join(".config/omarchy/current/background");
     command
         .contains(&omarchy_background.display().to_string())
@@ -482,7 +498,15 @@ fn install_animation_tick(window: &gtk::ApplicationWindow, state: Rc<RefCell<App
 }
 
 fn install_keys(window: &gtk::ApplicationWindow, state: Rc<RefCell<AppState>>) {
+    install_keys_on(window, window, state);
+}
+
+fn install_keys_on<W>(target: &W, window: &gtk::ApplicationWindow, state: Rc<RefCell<AppState>>)
+where
+    W: IsA<gtk::Widget>,
+{
     let keys = gtk::EventControllerKey::new();
+    keys.set_propagation_phase(gtk::PropagationPhase::Capture);
     let window_for_keys = window.clone();
     keys.connect_key_pressed(move |_, key, _, _| match key {
         gdk::Key::Escape => {
@@ -515,11 +539,22 @@ fn install_keys(window: &gtk::ApplicationWindow, state: Rc<RefCell<AppState>>) {
         }
         _ => glib::Propagation::Proceed,
     });
-    window.add_controller(keys);
+    target.add_controller(keys);
 }
 
 fn install_pointer_controls(window: &gtk::ApplicationWindow, state: Rc<RefCell<AppState>>) {
+    install_pointer_controls_on(window, window, state);
+}
+
+fn install_pointer_controls_on<W>(
+    target: &W,
+    window: &gtk::ApplicationWindow,
+    state: Rc<RefCell<AppState>>,
+) where
+    W: IsA<gtk::Widget>,
+{
     let scroll = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::BOTH_AXES);
+    scroll.set_propagation_phase(gtk::PropagationPhase::Capture);
     let window_for_scroll = window.clone();
     let state_for_scroll = state.clone();
     scroll.connect_scroll(move |_, dx, dy| {
@@ -531,9 +566,10 @@ fn install_pointer_controls(window: &gtk::ApplicationWindow, state: Rc<RefCell<A
         render(&window_for_scroll, state_for_scroll.clone());
         glib::Propagation::Stop
     });
-    window.add_controller(scroll);
+    target.add_controller(scroll);
 
     let click = gtk::GestureClick::new();
+    click.set_propagation_phase(gtk::PropagationPhase::Capture);
     let window_for_click = window.clone();
     click.connect_pressed(move |_, presses, x, _| {
         if presses >= 2 {
@@ -550,7 +586,7 @@ fn install_pointer_controls(window: &gtk::ApplicationWindow, state: Rc<RefCell<A
             render(&window_for_click, state.clone());
         }
     });
-    window.add_controller(click);
+    target.add_controller(click);
 }
 
 fn install_close_cleanup(window: &gtk::ApplicationWindow, state: Rc<RefCell<AppState>>) {
@@ -633,10 +669,12 @@ fn apply_selected(state: &Rc<RefCell<AppState>>, window: &gtk::ApplicationWindow
 
     match apply_wallpaper(&path, &monitor) {
         Ok(()) => {
-            let mut state = state.borrow_mut();
-            state.active_wallpaper = Some(path.clone());
-            state.current_preview_wallpaper = Some(path);
-            state.original_wallpaper = state.current_preview_wallpaper.clone();
+            {
+                let mut state = state.borrow_mut();
+                state.active_wallpaper = Some(path.clone());
+                state.current_preview_wallpaper = Some(path);
+                state.original_wallpaper = state.current_preview_wallpaper.clone();
+            }
             window.close();
         }
         Err(error) => {
@@ -670,14 +708,14 @@ fn schedule_desktop_preview(state: &Rc<RefCell<AppState>>) {
         state.desktop_preview_generation += 1;
         let generation = state.desktop_preview_generation;
         state.status = Some("Previewing...".to_string());
-        DesktopPreviewRequest::Preview(DesktopPreviewJob {
+        DesktopPreviewRequest::Preview(Box::new(DesktopPreviewJob {
             path,
             monitor: state.args.monitor.clone(),
             generation,
             debounce_ms,
             is_live,
             config: state.config.clone(),
-        })
+        }))
     };
 
     let _ = state.borrow().desktop_request_tx.send(request);
@@ -731,7 +769,7 @@ fn rescan(state: &Rc<RefCell<AppState>>) {
     }
 }
 
-fn initial_selection(items: &[WallpaperItem], folder: &PathBuf, shell_state: &ShellState) -> usize {
+fn initial_selection(items: &[WallpaperItem], folder: &Path, shell_state: &ShellState) -> usize {
     if items.is_empty() {
         return 0;
     }
