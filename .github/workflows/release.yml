@@ -67,6 +67,8 @@ jobs:
           mkdir -p dist/jobowalls-x86_64-unknown-linux-gnu/share/applications
           install -m 0755 target/release/jobowalls \
             dist/jobowalls-x86_64-unknown-linux-gnu/bin/jobowalls
+          install -m 0755 target/release/jobowalls-shell \
+            dist/jobowalls-x86_64-unknown-linux-gnu/bin/jobowalls-shell
           install -m 0755 gui/src-tauri/target/release/jobowalls-gui \
             dist/jobowalls-x86_64-unknown-linux-gnu/bin/jobowalls-gui-bin
           install -m 0755 packaging/linux/jobowalls-gui \
