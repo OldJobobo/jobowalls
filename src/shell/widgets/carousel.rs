@@ -6,7 +6,7 @@ use gtk::prelude::*;
 use std::{collections::BTreeSet, path::Path};
 
 pub const STAGE_WIDTH: i32 = 860;
-const STAGE_HEIGHT: i32 = 204;
+pub const STAGE_HEIGHT: i32 = 204;
 const SLOT_IMAGE_OVERLAP: f64 = 18.0;
 
 pub fn build(

@@ -6,7 +6,7 @@ use crate::{
     orchestrator::SetPlan,
     shell::{
         apply::apply_wallpaper,
-        cli::{ShellArgs, ShellPosition},
+        cli::ShellArgs,
         layer,
         model::WallpaperItem,
         preview::{PreviewProfile, generate, prioritized_jobs},
@@ -150,16 +150,13 @@ fn build_ui(
     load_css();
 
     let args = state.borrow().args.clone();
-    let window_width = if args.width > 0 {
-        args.width
-    } else {
-        carousel::STAGE_WIDTH
-    };
+    let target_monitor = shell_target_monitor(&args);
+    let (window_width, window_height) = shell_panel_dimensions(&args);
     let window = gtk::ApplicationWindow::builder()
         .application(app)
         .title("JoboWalls Shell")
         .default_width(window_width)
-        .default_height(args.height())
+        .default_height(window_height)
         .focusable(true)
         .focus_on_click(true)
         .resizable(false)
@@ -168,7 +165,18 @@ fn build_ui(
         window.set_default_size(window_width, args.height());
     }
     window.add_css_class("shell-window");
-    layer::configure(&window, &args);
+    layer::configure_panel(&window, &args, target_monitor.as_ref());
+    let click_catcher = if args.debug_window {
+        None
+    } else {
+        Some(build_click_catcher(
+            app,
+            &args,
+            target_monitor.as_ref(),
+            state.clone(),
+            &window,
+        ))
+    };
 
     render(&window, state.clone());
     if let Some(preview_rx) = preview_rx {
@@ -179,13 +187,92 @@ fn build_ui(
     }
     install_animation_tick(&window, state.clone());
     install_keys(&window, state.clone());
-    install_outside_cancel(&window, state.clone());
-    install_close_cleanup(&window, state.clone());
+    install_close_cleanup(&window, state.clone(), click_catcher.clone());
     schedule_desktop_preview(&state);
+    if let Some(click_catcher) = &click_catcher {
+        click_catcher.present();
+    }
     window.present();
     window.present_with_time(0);
     request_window_focus(&window);
     Ok(())
+}
+
+fn build_click_catcher(
+    app: &gtk::Application,
+    args: &ShellArgs,
+    monitor: Option<&gdk::Monitor>,
+    state: Rc<RefCell<AppState>>,
+    panel_window: &gtk::ApplicationWindow,
+) -> gtk::ApplicationWindow {
+    let (width, height) = monitor_dimensions_for(monitor)
+        .or_else(monitor_dimensions)
+        .unwrap_or((carousel::STAGE_WIDTH, args.height()));
+    let window = gtk::ApplicationWindow::builder()
+        .application(app)
+        .title("JoboWalls Shell Dismiss")
+        .default_width(width)
+        .default_height(height)
+        .focusable(false)
+        .resizable(false)
+        .build();
+    window.add_css_class("shell-window");
+    window.set_size_request(width, height);
+    layer::configure_click_catcher(&window, monitor);
+
+    let surface = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    surface.add_css_class("shell-dismiss-surface");
+    surface.set_hexpand(true);
+    surface.set_vexpand(true);
+    install_cancel_on_click(&surface, panel_window, state);
+    window.set_child(Some(&surface));
+    window
+}
+
+fn shell_panel_dimensions(args: &ShellArgs) -> (i32, i32) {
+    let width = if args.width > 0 {
+        args.width
+    } else {
+        carousel::STAGE_WIDTH
+    };
+    (width, args.height())
+}
+
+fn shell_target_monitor(args: &ShellArgs) -> Option<gdk::Monitor> {
+    let target = args.monitor();
+    if target == "all" {
+        return None;
+    }
+
+    monitor_by_connector(target)
+}
+
+fn monitor_by_connector(target: &str) -> Option<gdk::Monitor> {
+    let display = gdk::Display::default()?;
+    let monitors = display.monitors();
+    for index in 0..monitors.n_items() {
+        let monitor = monitors.item(index)?.downcast::<gdk::Monitor>().ok()?;
+        if monitor
+            .connector()
+            .is_some_and(|connector| connector.as_str() == target)
+        {
+            return Some(monitor);
+        }
+    }
+    None
+}
+
+fn monitor_dimensions() -> Option<(i32, i32)> {
+    let display = gdk::Display::default()?;
+    let monitors = display.monitors();
+    let monitor = monitors.item(0)?.downcast::<gdk::Monitor>().ok()?;
+    monitor_dimensions_for(Some(&monitor))
+}
+
+fn monitor_dimensions_for(monitor: Option<&gdk::Monitor>) -> Option<(i32, i32)> {
+    let monitor = monitor?;
+    let geometry = monitor.geometry();
+    Some((geometry.width(), geometry.height()))
 }
 
 fn render(window: &gtk::ApplicationWindow, state: Rc<RefCell<AppState>>) {
@@ -193,19 +280,9 @@ fn render(window: &gtk::ApplicationWindow, state: Rc<RefCell<AppState>>) {
     let root = gtk::Box::new(gtk::Orientation::Vertical, 8);
     root.add_css_class("shell-root");
     root.set_halign(gtk::Align::Center);
-    root.set_valign(if state_ref.args.position() == ShellPosition::Center {
-        gtk::Align::Center
-    } else {
-        gtk::Align::End
-    });
-    root.set_margin_bottom(if state_ref.args.position() == ShellPosition::Center {
-        0
-    } else {
-        48
-    });
+    root.set_valign(gtk::Align::Center);
     root.set_focusable(true);
     root.set_width_request(carousel::STAGE_WIDTH);
-    root.set_height_request(state_ref.args.height());
 
     if state_ref.items.is_empty() {
         root.append(&empty::build("No wallpapers found"));
@@ -232,6 +309,7 @@ fn render(window: &gtk::ApplicationWindow, state: Rc<RefCell<AppState>>) {
 
     install_keys_on(&root, window, state.clone());
     install_pointer_controls_on(&root, window, state.clone());
+    drop(state_ref);
     window.set_child(Some(&root));
     request_widget_focus(&root);
 }
@@ -849,52 +927,31 @@ fn install_pointer_controls_on<W>(
     target.add_controller(click);
 }
 
-fn install_outside_cancel(window: &gtk::ApplicationWindow, state: Rc<RefCell<AppState>>) {
+fn install_cancel_on_click<W>(
+    target: &W,
+    window: &gtk::ApplicationWindow,
+    state: Rc<RefCell<AppState>>,
+) where
+    W: IsA<gtk::Widget>,
+{
     let click = gtk::GestureClick::new();
-    click.set_propagation_phase(gtk::PropagationPhase::Bubble);
+    click.set_propagation_phase(gtk::PropagationPhase::Capture);
     let window_for_click = window.clone();
-    let args = state.borrow().args.clone();
-    click.connect_pressed(move |_, _, x, y| {
-        if args.debug_window {
-            return;
-        }
-
-        if !point_inside_shell_panel(
-            f64::from(window_for_click.width()),
-            f64::from(window_for_click.height()),
-            &args,
-            x,
-            y,
-        ) {
-            restore_original_and_close(&state, &window_for_click);
-        }
+    click.connect_pressed(move |_, _, _, _| {
+        restore_original_and_close(&state, &window_for_click);
     });
-    window.add_controller(click);
+    target.add_controller(click);
 }
 
-fn point_inside_shell_panel(
-    window_width: f64,
-    window_height: f64,
-    args: &ShellArgs,
-    x: f64,
-    y: f64,
-) -> bool {
-    let panel_width = f64::from(carousel::STAGE_WIDTH);
-    let panel_height = f64::from(args.height());
-    let left = ((window_width - panel_width) / 2.0).max(0.0);
-    let right = (left + panel_width).min(window_width.max(panel_width));
-    let top = if args.position() == ShellPosition::Center {
-        ((window_height - panel_height) / 2.0).max(0.0)
-    } else {
-        (window_height - panel_height - 48.0).max(0.0)
-    };
-    let bottom = (top + panel_height).min(window_height.max(panel_height));
-
-    x >= left && x <= right && y >= top && y <= bottom
-}
-
-fn install_close_cleanup(window: &gtk::ApplicationWindow, state: Rc<RefCell<AppState>>) {
+fn install_close_cleanup(
+    window: &gtk::ApplicationWindow,
+    state: Rc<RefCell<AppState>>,
+    click_catcher: Option<gtk::ApplicationWindow>,
+) {
     window.connect_close_request(move |_| {
+        if let Some(click_catcher) = &click_catcher {
+            click_catcher.close();
+        }
         stop_desktop_preview_worker(&state);
         glib::Propagation::Proceed
     });
@@ -1236,57 +1293,6 @@ mod tests {
             Vec::<u32>::new()
         );
         assert_eq!(state_live_pids_for_monitor(&state, "all"), vec![101]);
-    }
-
-    #[test]
-    fn outside_click_geometry_tracks_bottom_and_center_panel() {
-        let bottom_args = ShellArgs {
-            folder: None,
-            monitor: None,
-            position: Some(ShellPosition::Bottom),
-            width: 0,
-            height: Some(340),
-            no_live_preview: false,
-            debug_window: false,
-        };
-        assert!(point_inside_shell_panel(
-            1920.0,
-            1080.0,
-            &bottom_args,
-            960.0,
-            860.0
-        ));
-        assert!(!point_inside_shell_panel(
-            1920.0,
-            1080.0,
-            &bottom_args,
-            960.0,
-            500.0
-        ));
-
-        let center_args = ShellArgs {
-            folder: None,
-            monitor: None,
-            position: Some(ShellPosition::Center),
-            width: 0,
-            height: Some(340),
-            no_live_preview: false,
-            debug_window: false,
-        };
-        assert!(point_inside_shell_panel(
-            1920.0,
-            1080.0,
-            &center_args,
-            960.0,
-            540.0
-        ));
-        assert!(!point_inside_shell_panel(
-            1920.0,
-            1080.0,
-            &center_args,
-            960.0,
-            900.0
-        ));
     }
 
     #[test]

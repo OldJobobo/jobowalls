@@ -2,6 +2,10 @@
   background: transparent;
 }
 
+.shell-dismiss-surface {
+  background: transparent;
+}
+
 .shell-root {
   background: transparent;
   padding: 0;
