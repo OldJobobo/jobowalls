@@ -1,6 +1,6 @@
 use crate::{
     backends::{
-        awww, hyprpaper,
+        awww,
         model::{Backend, BackendOverride, WallpaperBackend},
         mpvpaper, swaybg,
     },
@@ -8,7 +8,7 @@ use crate::{
         scan_collection, select_next_persistent, select_previous_persistent,
         select_shuffle_persistent,
     },
-    command::{CommandSpec, pid_is_running, program_available, run_all, signal_pid, terminate_pid},
+    command::{CommandSpec, pid_is_running, program_available, signal_pid, terminate_pid},
     config::{BackendPreference, Config, StaticBackendPreference},
     monitors,
     orchestrator::{SetPlan, plan_set},
@@ -107,7 +107,6 @@ struct CollectionArgs {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum BackendArg {
     Auto,
-    Hyprpaper,
     Mpvpaper,
     Awww,
     Swaybg,
@@ -117,7 +116,6 @@ impl From<BackendArg> for BackendOverride {
     fn from(value: BackendArg) -> Self {
         match value {
             BackendArg::Auto => BackendOverride::Auto,
-            BackendArg::Hyprpaper => BackendOverride::Backend(Backend::Hyprpaper),
             BackendArg::Mpvpaper => BackendOverride::Backend(Backend::Mpvpaper),
             BackendArg::Awww => BackendOverride::Backend(Backend::Awww),
             BackendArg::Swaybg => BackendOverride::Backend(Backend::Swaybg),
@@ -378,15 +376,6 @@ fn print_doctor(paths: &RuntimePaths, config: &Config) {
     println!("hyprctl available: {}", command_available("hyprctl"));
     println!(
         "{} available: {}",
-        backend_adapter(Backend::Hyprpaper).name(),
-        backend_adapter(Backend::Hyprpaper).is_available()
-    );
-    println!(
-        "hyprpaper daemon reachable: {}",
-        hyprpaper_daemon_reachable()
-    );
-    println!(
-        "{} available: {}",
         backend_adapter(Backend::Mpvpaper).name(),
         backend_adapter(Backend::Mpvpaper).is_available()
     );
@@ -489,34 +478,6 @@ fn execute_set_plan(plan: &SetPlan, config: &Config, state_path: &std::path::Pat
         .unwrap_or_default();
 
     match plan.backend {
-        Backend::Hyprpaper => {
-            let monitors = if plan.monitor == "all" {
-                monitors::names()?
-            } else {
-                vec![plan.monitor.clone()]
-            };
-            stop_owned_swaybg_for_monitors(state_path, &target_monitor_names(plan, &monitors)?)?;
-            if let Some(pid) = ensure_hyprpaper_daemon()? {
-                println!("started hyprpaper with pid {pid}");
-            }
-            let commands = hyprpaper::apply_commands(plan, &monitors, &config.hyprpaper);
-            run_all(&commands)?;
-            stop_owned_live_for_monitors(state_path, &target_monitor_names(plan, &monitors)?)?;
-            let mut state = State::merged_with_monitor_entries(
-                existing_state.as_ref(),
-                plan,
-                static_entries(plan, &monitors),
-            );
-            state.collections = existing_collections;
-            state.record_last_command(last_set_command(plan));
-            state.save(state_path)?;
-            println!(
-                "set {} on {} using {}",
-                plan.wallpaper.display(),
-                plan.monitor,
-                plan.backend
-            );
-        }
         Backend::Mpvpaper => {
             let plans = target_monitor_plans(plan)?;
             let target_monitors = plans
@@ -807,7 +768,6 @@ fn restore_profile_plans_for_monitors(
         })?;
         let backend = match profile.backend {
             BackendPreference::Auto => BackendArg::Auto,
-            BackendPreference::Hyprpaper => BackendArg::Hyprpaper,
             BackendPreference::Mpvpaper => BackendArg::Mpvpaper,
             BackendPreference::Awww => BackendArg::Awww,
             BackendPreference::Swaybg => BackendArg::Swaybg,
@@ -1291,19 +1251,6 @@ fn print_set_plan(plan: &crate::orchestrator::SetPlan, config: &Config) -> Resul
     println!("wallpaper: {}", plan.wallpaper.display());
 
     match plan.backend {
-        Backend::Hyprpaper => {
-            let monitors = if plan.monitor == "all" {
-                monitors::names()?
-            } else {
-                Vec::new()
-            };
-
-            println!("ensure: {}", hyprpaper::query_command());
-            println!("fallback: {}", hyprpaper::daemon_command());
-            for command in hyprpaper::apply_commands(plan, &monitors, &config.hyprpaper) {
-                println!("command: {command}");
-            }
-        }
         Backend::Mpvpaper => {
             for plan in target_monitor_plans(plan)? {
                 println!(
@@ -1342,24 +1289,6 @@ fn print_set_plan_json(plan: &crate::orchestrator::SetPlan) -> Result<()> {
     };
     println!("{}", serde_json::to_string_pretty(&payload)?);
     Ok(())
-}
-
-fn hyprpaper_daemon_reachable() -> bool {
-    hyprpaper::query_command().run().is_ok()
-}
-
-fn ensure_hyprpaper_daemon() -> Result<Option<u32>> {
-    if hyprpaper_daemon_reachable() {
-        return Ok(None);
-    }
-
-    let pid = hyprpaper::daemon_command().spawn_detached()?;
-    wait_until_reachable(
-        hyprpaper_daemon_reachable,
-        Duration::from_millis(2_000),
-        "hyprpaper daemon",
-    )?;
-    Ok(Some(pid))
 }
 
 fn awww_daemon_reachable() -> bool {
@@ -1407,7 +1336,6 @@ fn command_available(program: &str) -> bool {
 fn detected_static_auto_backend(config: &Config) -> Backend {
     match config.general.static_backend {
         StaticBackendPreference::Auto => select_static_auto_backend(config),
-        StaticBackendPreference::Hyprpaper => Backend::Hyprpaper,
         StaticBackendPreference::Awww => Backend::Awww,
         StaticBackendPreference::Swaybg => Backend::Swaybg,
     }
@@ -1416,7 +1344,6 @@ fn detected_static_auto_backend(config: &Config) -> Backend {
 fn select_static_auto_backend(config: &Config) -> Backend {
     select_static_auto_backend_with_availability(
         config,
-        backend_adapter(Backend::Hyprpaper).is_available(),
         backend_adapter(Backend::Awww).is_available(),
         backend_adapter(Backend::Swaybg).is_available(),
     )
@@ -1424,7 +1351,6 @@ fn select_static_auto_backend(config: &Config) -> Backend {
 
 fn select_static_auto_backend_with_availability(
     config: &Config,
-    hyprpaper_available: bool,
     awww_available: bool,
     swaybg_available: bool,
 ) -> Backend {
@@ -1436,10 +1362,6 @@ fn select_static_auto_backend_with_availability(
         return Backend::Swaybg;
     }
 
-    if hyprpaper_available {
-        return Backend::Hyprpaper;
-    }
-
     if awww_available {
         return Backend::Awww;
     }
@@ -1449,7 +1371,6 @@ fn select_static_auto_backend_with_availability(
 
 fn backend_adapter(backend: Backend) -> &'static dyn WallpaperBackend {
     match backend {
-        Backend::Hyprpaper => &hyprpaper::HyprpaperBackend,
         Backend::Mpvpaper => &mpvpaper::MpvpaperBackend,
         Backend::Awww => &awww::AwwwBackend,
         Backend::Swaybg => &swaybg::SwaybgBackend,
@@ -1499,13 +1420,14 @@ fn default_state_path() -> PathBuf {
 mod tests {
     use super::*;
     use crate::media::MediaKind;
+    use std::os::unix::net::UnixListener;
 
     #[test]
-    fn runtime_auto_backend_prefers_swaybg_over_hyprpaper() {
+    fn runtime_auto_backend_prefers_swaybg_by_default() {
         let config = Config::default();
 
         assert_eq!(
-            select_static_auto_backend_with_availability(&config, true, true, true),
+            select_static_auto_backend_with_availability(&config, true, true),
             Backend::Swaybg
         );
     }
@@ -1516,7 +1438,7 @@ mod tests {
         config.awww.enabled = true;
 
         assert_eq!(
-            select_static_auto_backend_with_availability(&config, true, true, true),
+            select_static_auto_backend_with_availability(&config, true, true),
             Backend::Awww
         );
     }
@@ -1526,17 +1448,17 @@ mod tests {
         let config = Config::default();
 
         assert_eq!(
-            select_static_auto_backend_with_availability(&config, false, false, true),
+            select_static_auto_backend_with_availability(&config, false, true),
             Backend::Swaybg
         );
     }
 
     #[test]
-    fn runtime_auto_backend_falls_back_to_awww_when_swaybg_and_hyprpaper_are_missing() {
+    fn runtime_auto_backend_falls_back_to_awww_when_swaybg_is_missing() {
         let config = Config::default();
 
         assert_eq!(
-            select_static_auto_backend_with_availability(&config, false, true, false),
+            select_static_auto_backend_with_availability(&config, true, false),
             Backend::Awww
         );
     }
@@ -1548,13 +1470,13 @@ mod tests {
         let mut plan = SetPlan {
             wallpaper: PathBuf::from("/tmp/wall.png"),
             media_kind: MediaKind::Static,
-            backend: Backend::Hyprpaper,
+            backend: Backend::Swaybg,
             monitor: "all".to_string(),
         };
 
-        apply_runtime_auto_backend(&mut plan, &config, BackendArg::Hyprpaper);
+        apply_runtime_auto_backend(&mut plan, &config, BackendArg::Swaybg);
 
-        assert_eq!(plan.backend, Backend::Hyprpaper);
+        assert_eq!(plan.backend, Backend::Swaybg);
     }
 
     #[test]
@@ -1562,8 +1484,8 @@ mod tests {
         let config = Config::default();
 
         assert_eq!(
-            select_static_auto_backend_with_availability(&config, true, true, false),
-            Backend::Hyprpaper
+            select_static_auto_backend_with_availability(&config, true, false),
+            Backend::Awww
         );
     }
 
@@ -1587,7 +1509,7 @@ mod tests {
         let plan = SetPlan {
             wallpaper: PathBuf::from("/tmp/wall.png"),
             media_kind: MediaKind::Static,
-            backend: Backend::Hyprpaper,
+            backend: Backend::Swaybg,
             monitor: "all".to_string(),
         };
         let payload = SetPlanJson {
@@ -1600,7 +1522,7 @@ mod tests {
 
         assert_eq!(value["wallpaper"], "/tmp/wall.png");
         assert_eq!(value["media_kind"], "static");
-        assert_eq!(value["backend"], "hyprpaper");
+        assert_eq!(value["backend"], "swaybg");
         assert_eq!(value["monitor"], "all");
     }
 
@@ -1719,6 +1641,110 @@ mod tests {
     }
 
     #[test]
+    fn mpvpaper_ipc_socket_sanitizes_monitor_name() {
+        let plan = SetPlan {
+            wallpaper: PathBuf::from("/tmp/rain.mp4"),
+            media_kind: MediaKind::Live,
+            backend: Backend::Mpvpaper,
+            monitor: "DP-1/special:name".to_string(),
+        };
+
+        let socket = mpvpaper_ipc_socket(&plan);
+        let file_name = socket.file_name().and_then(|name| name.to_str()).unwrap();
+
+        assert!(file_name.contains("DP-1_special_name"));
+        assert!(!file_name.contains('/'));
+        assert!(!file_name.contains(':'));
+    }
+
+    #[test]
+    fn query_mpv_video_output_reports_ready_when_data_is_present() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("mpv.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = String::new();
+            BufReader::new(stream.try_clone().unwrap())
+                .read_line(&mut request)
+                .unwrap();
+            assert!(request.contains("video-out-params"));
+            writeln!(
+                stream,
+                r#"{{"request_id":1,"error":"success","data":{{"w":1920}}}}"#
+            )
+            .unwrap();
+        });
+
+        assert!(query_mpv_video_output(&socket).unwrap());
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn query_mpv_video_output_reports_not_ready_when_data_is_null() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("mpv.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = String::new();
+            BufReader::new(stream.try_clone().unwrap())
+                .read_line(&mut request)
+                .unwrap();
+            writeln!(
+                stream,
+                r#"{{"request_id":1,"error":"success","data":null}}"#
+            )
+            .unwrap();
+        });
+
+        assert!(!query_mpv_video_output(&socket).unwrap());
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn query_mpv_video_output_reports_not_ready_on_mpv_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("mpv.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = String::new();
+            BufReader::new(stream.try_clone().unwrap())
+                .read_line(&mut request)
+                .unwrap();
+            writeln!(
+                stream,
+                r#"{{"request_id":1,"error":"property unavailable"}}"#
+            )
+            .unwrap();
+        });
+
+        assert!(!query_mpv_video_output(&socket).unwrap());
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn query_mpv_video_output_errors_on_malformed_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("mpv.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = String::new();
+            BufReader::new(stream.try_clone().unwrap())
+                .read_line(&mut request)
+                .unwrap();
+            writeln!(stream, "not json").unwrap();
+        });
+
+        let error = query_mpv_video_output(&socket).unwrap_err().to_string();
+
+        assert!(error.contains("failed to parse mpv IPC readiness response"));
+        server.join().unwrap();
+    }
+
+    #[test]
     fn restore_profile_plans_use_active_monitor_profiles() {
         let dir = tempfile::tempdir().unwrap();
         let wallpaper = dir.path().join("wall.png");
@@ -1728,11 +1754,11 @@ mod tests {
             r#"
             [monitors.profiles.DP-1]
             wallpaper = "{}"
-            backend = "hyprpaper"
+            backend = "swaybg"
 
             [monitors.profiles.HDMI-A-1]
             wallpaper = "/tmp/missing.png"
-            backend = "hyprpaper"
+            backend = "swaybg"
             "#,
             wallpaper.display()
         );
@@ -1742,6 +1768,6 @@ mod tests {
 
         assert_eq!(plans.len(), 1);
         assert_eq!(plans[0].monitor, "DP-1");
-        assert_eq!(plans[0].backend, Backend::Hyprpaper);
+        assert_eq!(plans[0].backend, Backend::Swaybg);
     }
 }

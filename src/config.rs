@@ -12,7 +12,6 @@ use std::{
 pub enum StaticBackendPreference {
     #[default]
     Auto,
-    Hyprpaper,
     Awww,
     Swaybg,
 }
@@ -23,7 +22,6 @@ pub struct Config {
     pub general: GeneralConfig,
     pub monitors: MonitorConfig,
     pub live: LiveConfig,
-    pub hyprpaper: HyprpaperConfig,
     pub mpvpaper: MpvpaperConfig,
     pub awww: AwwwConfig,
 }
@@ -63,10 +61,9 @@ impl Config {
                 if self.awww.enabled {
                     Some(Backend::Awww)
                 } else {
-                    Some(Backend::Hyprpaper)
+                    Some(Backend::Swaybg)
                 }
             }
-            StaticBackendPreference::Hyprpaper => Some(Backend::Hyprpaper),
             StaticBackendPreference::Awww => Some(Backend::Awww),
             StaticBackendPreference::Swaybg => Some(Backend::Swaybg),
         }
@@ -128,7 +125,6 @@ impl Default for MonitorProfileConfig {
 pub enum BackendPreference {
     #[default]
     Auto,
-    Hyprpaper,
     Mpvpaper,
     Awww,
     Swaybg,
@@ -138,7 +134,6 @@ impl BackendPreference {
     pub fn as_backend(self) -> Option<Backend> {
         match self {
             Self::Auto => None,
-            Self::Hyprpaper => Some(Backend::Hyprpaper),
             Self::Mpvpaper => Some(Backend::Mpvpaper),
             Self::Awww => Some(Backend::Awww),
             Self::Swaybg => Some(Backend::Swaybg),
@@ -172,20 +167,6 @@ impl Default for LivePauseConfig {
             resume_on_ac: true,
             resume_on_unfullscreen: true,
             resume_on_activity: true,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct HyprpaperConfig {
-    pub unload_unused: bool,
-}
-
-impl Default for HyprpaperConfig {
-    fn default() -> Self {
-        Self {
-            unload_unused: true,
         }
     }
 }
@@ -267,7 +248,7 @@ mod tests {
     #[test]
     fn auto_static_uses_awww_when_enabled() {
         let mut config = Config::default();
-        assert_eq!(config.configured_static_backend(), Some(Backend::Hyprpaper));
+        assert_eq!(config.configured_static_backend(), Some(Backend::Swaybg));
         config.awww.enabled = true;
         assert_eq!(config.configured_static_backend(), Some(Backend::Awww));
     }
@@ -290,7 +271,7 @@ mod tests {
 
             [monitors.profiles.DP-1]
             wallpaper = "/tmp/wall.png"
-            backend = "hyprpaper"
+            backend = "swaybg"
         "#;
 
         let config: Config = toml::from_str(raw).unwrap();
@@ -300,6 +281,39 @@ mod tests {
             profile.wallpaper.as_deref(),
             Some(Path::new("/tmp/wall.png"))
         );
-        assert_eq!(profile.backend, BackendPreference::Hyprpaper);
+        assert_eq!(profile.backend, BackendPreference::Swaybg);
+    }
+
+    #[test]
+    fn load_missing_config_returns_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("missing.toml");
+
+        assert_eq!(Config::load(&path).unwrap(), Config::default());
+    }
+
+    #[test]
+    fn load_invalid_config_reports_parse_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "not = [valid").unwrap();
+
+        let error = Config::load(&path).unwrap_err().to_string();
+
+        assert!(error.contains("failed to parse config"));
+    }
+
+    #[test]
+    fn save_refuses_to_overwrite_without_force() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "existing = true\n").unwrap();
+
+        let error = Config::default()
+            .save(&path, false)
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("config already exists"));
     }
 }

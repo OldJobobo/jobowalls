@@ -133,18 +133,48 @@ exit 0
         );
     }
 
-    fn fake_hyprctl_hyprpaper(&self) {
+    fn fake_doctor_commands(&self) {
         self.fake_program(
             "hyprctl",
             r#"#!/usr/bin/env bash
 printf 'hyprctl %s\n' "$*" >>"${JOBOWALLS_TEST_LOG:?}"
-if [[ "$*" == "hyprpaper listloaded" ]]; then
-  exit 0
-fi
 if [[ "$*" == "-j monitors" ]]; then
   printf '[{"name":"DP-1"}]\n'
   exit 0
 fi
+if [[ "$*" == "activewindow" || "$*" == "-j activewindow" ]]; then
+  printf '{"fullscreen":false}\n'
+  exit 0
+fi
+exit 0
+"#,
+        );
+        for name in ["swaybg", "mpvpaper", "awww", "awww-daemon"] {
+            self.fake_program(
+                name,
+                r#"#!/usr/bin/env bash
+printf '%s %s\n' "$(basename "$0")" "$*" >>"${JOBOWALLS_TEST_LOG:?}"
+exit 0
+"#,
+            );
+        }
+    }
+
+    fn fake_kill_all_success(&self) {
+        self.fake_program(
+            "kill",
+            r#"#!/usr/bin/env bash
+printf 'kill %s\n' "$*" >>"${JOBOWALLS_TEST_LOG:?}"
+exit 0
+"#,
+        );
+    }
+
+    fn fake_ps_without_omarchy_swaybg(&self) {
+        self.fake_program(
+            "ps",
+            r#"#!/usr/bin/env bash
+printf 'ps %s\n' "$*" >>"${JOBOWALLS_TEST_LOG:?}"
 exit 0
 "#,
         );
@@ -179,6 +209,19 @@ fn assert_failure(output: &Output) {
         CliHarness::stdout(output),
         CliHarness::stderr(output)
     );
+}
+
+fn wait_for_log_contains(path: &Path, needle: &str) -> bool {
+    for _ in 0..20 {
+        if fs::read_to_string(path)
+            .map(|log| log.contains(needle))
+            .unwrap_or(false)
+        {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    false
 }
 
 #[test]
@@ -331,43 +374,375 @@ fn list_monitors_falls_back_to_mpvpaper_outputs_when_hyprctl_fails() {
 }
 
 #[test]
-fn forced_hyprpaper_set_runs_expected_command_sequence_and_writes_state() {
+fn collection_next_executes_selection_and_records_progress() {
     let harness = CliHarness::new();
-    harness.fake_hyprctl_hyprpaper();
-    let wallpaper = harness.root.join("wall.png");
-    write_png(&wallpaper);
+    harness.fake_swaybg();
+    let collection = harness.root.join("walls");
+    fs::create_dir_all(&collection).unwrap();
+    let first = collection.join("a.png");
+    let second = collection.join("b.png");
+    write_png(&first);
+    write_png(&second);
 
+    let output = harness.run(&["next", collection.to_str().unwrap(), "--monitor", "DP-1"]);
+    assert_success(&output);
+
+    let canonical_collection = fs::canonicalize(&collection).unwrap();
+    let canonical_first = fs::canonicalize(&first).unwrap();
+    let stdout = CliHarness::stdout(&output);
+    assert!(stdout.contains(&format!("collection: {}", canonical_collection.display())));
+    assert!(stdout.contains(&format!("selected: {}", canonical_first.display())));
+
+    let state: Value = serde_json::from_str(&fs::read_to_string(&harness.state).unwrap()).unwrap();
+    assert_eq!(state["active_backend"], "swaybg");
+    assert_eq!(state["wallpaper"], canonical_first.display().to_string());
+    assert_eq!(state["monitors"]["DP-1"]["backend"], "swaybg");
+    assert_eq!(
+        state["collections"][canonical_collection.display().to_string()]["last_index"],
+        0
+    );
+    assert_eq!(
+        state["collections"][canonical_collection.display().to_string()]["last_wallpaper"],
+        canonical_first.display().to_string()
+    );
+    assert_eq!(
+        state["last_command"],
+        format!(
+            "next {} --monitor DP-1 --backend swaybg",
+            canonical_collection.display()
+        )
+    );
+}
+
+#[test]
+fn collection_previous_uses_saved_collection_progress() {
+    let harness = CliHarness::new();
+    harness.fake_swaybg();
+    let collection = harness.root.join("walls");
+    fs::create_dir_all(&collection).unwrap();
+    let first = collection.join("a.png");
+    let second = collection.join("b.png");
+    write_png(&first);
+    write_png(&second);
+
+    assert_success(&harness.run(&["next", collection.to_str().unwrap(), "--monitor", "DP-1"]));
     let output = harness.run(&[
-        "set",
-        wallpaper.to_str().unwrap(),
-        "--backend",
-        "hyprpaper",
+        "previous",
+        collection.to_str().unwrap(),
         "--monitor",
         "DP-1",
     ]);
     assert_success(&output);
 
-    let canonical = fs::canonicalize(&wallpaper).unwrap();
-    let expected = vec![
-        "hyprctl hyprpaper listloaded".to_string(),
-        format!("hyprctl hyprpaper preload {}", canonical.display()),
-        format!("hyprctl hyprpaper wallpaper DP-1,{}", canonical.display()),
-        "hyprctl hyprpaper unload unused".to_string(),
-    ];
-    let log = fs::read_to_string(&harness.log).unwrap();
-    let actual = log.lines().map(str::to_string).collect::<Vec<_>>();
-    assert_eq!(actual, expected);
-
+    let canonical_collection = fs::canonicalize(&collection).unwrap();
+    let canonical_second = fs::canonicalize(&second).unwrap();
     let state: Value = serde_json::from_str(&fs::read_to_string(&harness.state).unwrap()).unwrap();
-    assert_eq!(state["active_backend"], "hyprpaper");
-    assert_eq!(state["mode"], "static");
-    assert_eq!(state["wallpaper"], canonical.display().to_string());
-    assert_eq!(state["monitors"]["DP-1"]["backend"], "hyprpaper");
+
+    assert_eq!(state["wallpaper"], canonical_second.display().to_string());
+    assert_eq!(
+        state["collections"][canonical_collection.display().to_string()]["last_index"],
+        1
+    );
     assert_eq!(
         state["last_command"],
         format!(
-            "set {} --monitor DP-1 --backend hyprpaper",
-            canonical.display()
+            "previous {} --monitor DP-1 --backend swaybg",
+            canonical_collection.display()
         )
     );
+}
+
+#[test]
+fn collection_shuffle_records_shuffle_history() {
+    let harness = CliHarness::new();
+    harness.fake_swaybg();
+    let collection = harness.root.join("walls");
+    fs::create_dir_all(&collection).unwrap();
+    let first = fs::canonicalize({
+        let path = collection.join("a.png");
+        write_png(&path);
+        path
+    })
+    .unwrap();
+    let second = fs::canonicalize({
+        let path = collection.join("b.png");
+        write_png(&path);
+        path
+    })
+    .unwrap();
+
+    let output = harness.run(&["shuffle", collection.to_str().unwrap(), "--monitor", "DP-1"]);
+    assert_success(&output);
+
+    let canonical_collection = fs::canonicalize(&collection).unwrap();
+    let state: Value = serde_json::from_str(&fs::read_to_string(&harness.state).unwrap()).unwrap();
+    let selected = state["wallpaper"].as_str().unwrap();
+    assert!(
+        selected == first.display().to_string() || selected == second.display().to_string(),
+        "unexpected selected wallpaper {selected}"
+    );
+    assert_eq!(
+        state["collections"][canonical_collection.display().to_string()]["shuffle_history"],
+        serde_json::json!([selected])
+    );
+    assert_eq!(
+        state["last_command"],
+        format!(
+            "shuffle {} --monitor DP-1 --backend swaybg",
+            canonical_collection.display()
+        )
+    );
+}
+
+#[test]
+fn restore_static_swaybg_state_reapplies_and_records_restore() {
+    let harness = CliHarness::new();
+    harness.fake_swaybg();
+    harness.fake_ps_without_omarchy_swaybg();
+    let wallpaper = harness.root.join("restore.png");
+    write_png(&wallpaper);
+    let canonical = fs::canonicalize(&wallpaper).unwrap();
+    let state = serde_json::json!({
+        "version": 1,
+        "active_backend": "swaybg",
+        "mode": "static",
+        "wallpaper": canonical.display().to_string(),
+        "monitors": {
+            "DP-1": {
+                "backend": "swaybg",
+                "wallpaper": canonical.display().to_string(),
+                "pid": null
+            }
+        },
+        "collections": {
+            "/tmp/walls": {
+                "last_index": 2,
+                "last_wallpaper": "/tmp/walls/c.png",
+                "shuffle_history": []
+            }
+        },
+        "last_command": "set old",
+        "updated_at": "2026-05-08T00:00:00Z"
+    });
+    fs::write(
+        &harness.state,
+        serde_json::to_string_pretty(&state).unwrap(),
+    )
+    .unwrap();
+
+    let output = harness.run(&["restore"]);
+    assert_success(&output);
+
+    assert!(wait_for_log_contains(
+        &harness.log,
+        &format!("swaybg -i {} -m fill -o DP-1", canonical.display())
+    ));
+
+    let restored: Value =
+        serde_json::from_str(&fs::read_to_string(&harness.state).unwrap()).unwrap();
+    assert_eq!(restored["active_backend"], "swaybg");
+    assert_eq!(restored["last_command"], "restore");
+    assert_eq!(restored["collections"]["/tmp/walls"]["last_index"], 2);
+}
+
+#[test]
+fn restore_live_dry_run_prints_mpvpaper_commands_without_starting_processes() {
+    let harness = CliHarness::new();
+    let wallpaper = harness.root.join("rain.mp4");
+    fs::write(&wallpaper, b"video").unwrap();
+    let canonical = fs::canonicalize(&wallpaper).unwrap();
+    let state = serde_json::json!({
+        "version": 1,
+        "active_backend": "mpvpaper",
+        "mode": "live",
+        "wallpaper": canonical.display().to_string(),
+        "monitors": {
+            "DP-1": {
+                "backend": "mpvpaper",
+                "wallpaper": canonical.display().to_string(),
+                "pid": 12345
+            },
+            "HDMI-A-1": {
+                "backend": "mpvpaper",
+                "wallpaper": canonical.display().to_string(),
+                "pid": 12346
+            }
+        },
+        "collections": {},
+        "last_command": "set old",
+        "updated_at": "2026-05-08T00:00:00Z"
+    });
+    fs::write(
+        &harness.state,
+        serde_json::to_string_pretty(&state).unwrap(),
+    )
+    .unwrap();
+
+    let output = harness.run(&["restore", "--dry-run"]);
+    assert_success(&output);
+
+    let stdout = CliHarness::stdout(&output);
+    assert!(stdout.contains("restore backend: mpvpaper"));
+    assert!(stdout.contains(&format!(
+        "mpvpaper --mpv-options 'loop no-audio panscan=1.0' DP-1 {}",
+        canonical.display()
+    )));
+    assert!(stdout.contains(&format!(
+        "mpvpaper --mpv-options 'loop no-audio panscan=1.0' HDMI-A-1 {}",
+        canonical.display()
+    )));
+    assert!(!harness.log.exists());
+}
+
+#[test]
+fn doctor_reports_paths_backends_monitors_and_stale_state() {
+    let harness = CliHarness::new();
+    harness.fake_doctor_commands();
+    let state = serde_json::json!({
+        "version": 1,
+        "active_backend": "mpvpaper",
+        "mode": "live",
+        "wallpaper": "/tmp/rain.mp4",
+        "monitors": {
+            "DP-1": {
+                "backend": "mpvpaper",
+                "wallpaper": "/tmp/rain.mp4",
+                "pid": 999999
+            }
+        },
+        "collections": {},
+        "last_command": "set old",
+        "updated_at": "2026-05-08T00:00:00Z"
+    });
+    fs::write(
+        &harness.state,
+        serde_json::to_string_pretty(&state).unwrap(),
+    )
+    .unwrap();
+
+    let output = harness.run(&["doctor"]);
+    assert_success(&output);
+
+    let stdout = CliHarness::stdout(&output);
+    assert!(stdout.contains(&format!("config: {}", harness.config.display())));
+    assert!(stdout.contains("swaybg available: true"));
+    assert!(stdout.contains("active monitors: 1"));
+    assert!(stdout.contains("  DP-1"));
+    assert!(stdout.contains("saved backend: mpvpaper"));
+    assert!(stdout.contains("saved monitor DP-1: backend=mpvpaper, pid_status=stale"));
+    assert!(stdout.contains("stale owned live pids: 1"));
+}
+
+#[test]
+fn stop_live_terminates_only_recorded_mpvpaper_pids_and_clears_them() {
+    let harness = CliHarness::new();
+    harness.fake_kill_all_success();
+    let state = serde_json::json!({
+        "version": 1,
+        "active_backend": "mpvpaper",
+        "mode": "live",
+        "wallpaper": "/tmp/rain.mp4",
+        "monitors": {
+            "DP-1": {
+                "backend": "mpvpaper",
+                "wallpaper": "/tmp/rain.mp4",
+                "pid": 111
+            },
+            "HDMI-A-1": {
+                "backend": "mpvpaper",
+                "wallpaper": "/tmp/rain.mp4",
+                "pid": 222
+            },
+            "DP-3": {
+                "backend": "swaybg",
+                "wallpaper": "/tmp/wall.png",
+                "pid": 333
+            }
+        },
+        "collections": {},
+        "last_command": "set old",
+        "updated_at": "2026-05-08T00:00:00Z"
+    });
+    fs::write(
+        &harness.state,
+        serde_json::to_string_pretty(&state).unwrap(),
+    )
+    .unwrap();
+
+    let output = harness.run(&["stop-live"]);
+    assert_success(&output);
+
+    assert!(CliHarness::stdout(&output).contains("stopped 2 owned live wallpaper process(es)"));
+    let log = fs::read_to_string(&harness.log).unwrap();
+    assert!(log.contains("kill 111"));
+    assert!(log.contains("kill 222"));
+    assert!(!log.contains("kill 333"));
+
+    let state: Value = serde_json::from_str(&fs::read_to_string(&harness.state).unwrap()).unwrap();
+    assert_eq!(state["monitors"]["DP-1"]["pid"], Value::Null);
+    assert_eq!(state["monitors"]["HDMI-A-1"]["pid"], Value::Null);
+    assert_eq!(state["monitors"]["DP-3"]["pid"], 333);
+    assert_eq!(state["last_command"], "stop");
+}
+
+#[test]
+fn static_swaybg_set_for_named_monitor_stops_only_that_live_pid() {
+    let harness = CliHarness::new();
+    harness.fake_swaybg();
+    harness.fake_kill_all_success();
+    harness.fake_ps_without_omarchy_swaybg();
+    let wallpaper = harness.root.join("wall.png");
+    write_png(&wallpaper);
+    let canonical = fs::canonicalize(&wallpaper).unwrap();
+    let state = serde_json::json!({
+        "version": 1,
+        "active_backend": "mpvpaper",
+        "mode": "live",
+        "wallpaper": "/tmp/rain.mp4",
+        "monitors": {
+            "DP-1": {
+                "backend": "mpvpaper",
+                "wallpaper": "/tmp/rain.mp4",
+                "pid": 111
+            },
+            "HDMI-A-1": {
+                "backend": "mpvpaper",
+                "wallpaper": "/tmp/rain.mp4",
+                "pid": 222
+            }
+        },
+        "collections": {},
+        "last_command": "set old",
+        "updated_at": "2026-05-08T00:00:00Z"
+    });
+    fs::write(
+        &harness.state,
+        serde_json::to_string_pretty(&state).unwrap(),
+    )
+    .unwrap();
+
+    let output = harness.run(&[
+        "set",
+        wallpaper.to_str().unwrap(),
+        "--backend",
+        "swaybg",
+        "--monitor",
+        "DP-1",
+    ]);
+    assert_success(&output);
+
+    let log = fs::read_to_string(&harness.log).unwrap();
+    assert!(log.contains("kill 111"));
+    assert!(!log.contains("kill 222"));
+
+    let state: Value = serde_json::from_str(&fs::read_to_string(&harness.state).unwrap()).unwrap();
+    assert_eq!(state["active_backend"], "swaybg");
+    assert_eq!(state["monitors"]["DP-1"]["backend"], "swaybg");
+    assert_eq!(
+        state["monitors"]["DP-1"]["wallpaper"],
+        canonical.display().to_string()
+    );
+    assert!(state["monitors"]["DP-1"]["pid"].as_u64().is_some());
+    assert_eq!(state["monitors"]["HDMI-A-1"]["backend"], "mpvpaper");
+    assert_eq!(state["monitors"]["HDMI-A-1"]["pid"], 222);
 }

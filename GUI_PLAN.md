@@ -43,7 +43,7 @@ while still allowing custom invocation paths.
 - No full collection dashboard.
 - No permanent sidebar.
 - No full config editor.
-- No direct `hyprpaper`, `mpvpaper`, or `awww` integration.
+- No direct `swaybg`, `mpvpaper`, or `awww` integration.
 - No direct process killing.
 - No playlist editor.
 - No tag/rating system.
@@ -259,7 +259,7 @@ Example dry-run JSON:
 {
   "wallpaper": "/home/user/Pictures/Wallpapers/wall.png",
   "media_kind": "static",
-  "backend": "hyprpaper",
+  "backend": "swaybg",
   "monitor": "all"
 }
 ```
@@ -269,12 +269,12 @@ Example status JSON:
 ```json
 {
   "state_exists": true,
-  "active_backend": "hyprpaper",
+  "active_backend": "swaybg",
   "mode": "static",
   "wallpaper": "/home/user/Pictures/Wallpapers/wall.png",
   "monitors": {
     "all": {
-      "backend": "hyprpaper",
+      "backend": "swaybg",
       "wallpaper": "/home/user/Pictures/Wallpapers/wall.png",
       "pid": null
     }
@@ -524,4 +524,3 @@ These should stay aligned with the main CLI roadmap:
 - Transition controls for `awww`.
 - Theme-aware folder profiles.
 - Packaged release with bundled `jobowalls` sidecar.
-

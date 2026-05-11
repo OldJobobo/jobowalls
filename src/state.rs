@@ -324,14 +324,14 @@ mod tests {
         let plan = SetPlan {
             wallpaper: "/tmp/wall.png".into(),
             media_kind: MediaKind::Static,
-            backend: Backend::Hyprpaper,
+            backend: Backend::Swaybg,
             monitor: "all".to_string(),
         };
 
         let state = State::from_set_plan(&plan, None);
 
         assert_eq!(state.version, 1);
-        assert_eq!(state.active_backend, Backend::Hyprpaper);
+        assert_eq!(state.active_backend, Backend::Swaybg);
         assert_eq!(state.mode, MediaKind::Static);
         assert_eq!(state.monitors["all"].pid, None);
         assert_eq!(state.last_command, None);
@@ -377,7 +377,7 @@ mod tests {
         let static_plan = SetPlan {
             wallpaper: "/tmp/wall.png".into(),
             media_kind: MediaKind::Static,
-            backend: Backend::Hyprpaper,
+            backend: Backend::Swaybg,
             monitor: "DP-1".to_string(),
         };
 
@@ -388,7 +388,7 @@ mod tests {
         );
 
         assert_eq!(state.monitors.len(), 2);
-        assert_eq!(state.monitors["DP-1"].backend, Backend::Hyprpaper);
+        assert_eq!(state.monitors["DP-1"].backend, Backend::Swaybg);
         assert_eq!(state.monitors["HDMI-A-1"].backend, Backend::Mpvpaper);
         assert_eq!(state.monitors["HDMI-A-1"].pid, Some(101));
     }
@@ -439,7 +439,7 @@ mod tests {
         let plan = SetPlan {
             wallpaper: "/tmp/wall.png".into(),
             media_kind: MediaKind::Static,
-            backend: Backend::Hyprpaper,
+            backend: Backend::Swaybg,
             monitor: "DP-1".to_string(),
         };
         let mut state = State::from_set_plan(&plan, None);
@@ -447,5 +447,39 @@ mod tests {
         state.record_last_command("set /tmp/wall.png");
 
         assert_eq!(state.last_command.as_deref(), Some("set /tmp/wall.png"));
+    }
+
+    #[test]
+    fn load_invalid_state_reports_parse_error() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("state.json");
+        fs::write(&path, "{not json").unwrap();
+
+        let error = State::load(&path).unwrap_err().to_string();
+
+        assert!(error.contains("failed to parse state"));
+    }
+
+    #[test]
+    fn loads_older_state_without_collections_or_last_command() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("state.json");
+        fs::write(
+            &path,
+            r#"{
+              "version": 1,
+              "active_backend": "swaybg",
+              "mode": "static",
+              "wallpaper": "/tmp/wall.png",
+              "monitors": {},
+              "updated_at": "2026-05-08T00:00:00Z"
+            }"#,
+        )
+        .unwrap();
+
+        let state = State::load(&path).unwrap().unwrap();
+
+        assert!(state.collections.is_empty());
+        assert_eq!(state.last_command, None);
     }
 }

@@ -10,7 +10,6 @@ pub mod state;
 
 pub mod backends {
     pub mod awww;
-    pub mod hyprpaper;
     pub mod model;
     pub mod mpvpaper;
     pub mod swaybg;

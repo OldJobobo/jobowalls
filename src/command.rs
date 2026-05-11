@@ -174,11 +174,11 @@ mod tests {
         let command = CommandSpec::new(
             "hyprctl",
             [
-                OsString::from("hyprpaper"),
+                OsString::from("keyword"),
                 OsString::from("DP-1,/tmp/a b.png"),
             ],
         );
 
-        assert_eq!(command.to_string(), "hyprctl hyprpaper 'DP-1,/tmp/a b.png'");
+        assert_eq!(command.to_string(), "hyprctl keyword 'DP-1,/tmp/a b.png'");
     }
 }

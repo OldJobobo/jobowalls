@@ -1,7 +1,6 @@
 use crate::{
     backends::{
         awww::AwwwBackend,
-        hyprpaper::HyprpaperBackend,
         model::{Backend, BackendOverride, WallpaperBackend},
         mpvpaper::MpvpaperBackend,
         swaybg::SwaybgBackend,
@@ -59,7 +58,7 @@ pub fn plan_set(
         BackendOverride::Auto => match media_kind {
             MediaKind::Static => config
                 .configured_static_backend()
-                .unwrap_or(Backend::Hyprpaper),
+                .unwrap_or(Backend::Swaybg),
             MediaKind::Live => config.general.live_backend,
         },
         BackendOverride::Backend(backend) => {
@@ -87,7 +86,6 @@ fn validate_backend_for_media(backend: Backend, media_kind: MediaKind) -> Result
 
 fn backend_adapter(backend: Backend) -> &'static dyn WallpaperBackend {
     match backend {
-        Backend::Hyprpaper => &HyprpaperBackend,
         Backend::Mpvpaper => &MpvpaperBackend,
         Backend::Awww => &AwwwBackend,
         Backend::Swaybg => &SwaybgBackend,
@@ -99,7 +97,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn plans_static_wallpaper_with_hyprpaper_by_default() {
+    fn plans_static_wallpaper_with_swaybg_by_default() {
         let plan = plan_set(
             &Config::default(),
             Path::new("/tmp/wall.png"),
@@ -109,7 +107,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(plan.media_kind, MediaKind::Static);
-        assert_eq!(plan.backend, Backend::Hyprpaper);
+        assert_eq!(plan.backend, Backend::Swaybg);
         assert_eq!(plan.monitor, "all");
     }
 
@@ -134,10 +132,33 @@ mod tests {
             &Config::default(),
             Path::new("/tmp/rain.mp4"),
             None,
-            BackendOverride::Backend(Backend::Hyprpaper),
+            BackendOverride::Backend(Backend::Swaybg),
         );
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn rejects_backend_overrides_for_unsupported_media_pairs() {
+        for backend in [Backend::Awww, Backend::Swaybg] {
+            let result = plan_set(
+                &Config::default(),
+                Path::new("/tmp/rain.mp4"),
+                None,
+                BackendOverride::Backend(backend),
+            );
+
+            assert!(result.is_err(), "{backend} should reject live media");
+        }
+
+        let result = plan_set(
+            &Config::default(),
+            Path::new("/tmp/wall.png"),
+            None,
+            BackendOverride::Backend(Backend::Mpvpaper),
+        );
+
+        assert!(result.is_err(), "mpvpaper should reject static media");
     }
 
     #[test]

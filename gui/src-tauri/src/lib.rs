@@ -11,7 +11,7 @@ use tauri::{AppHandle, Manager};
 
 use base64::{engine::general_purpose, Engine as _};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 enum MediaKind {
     Static,
@@ -396,7 +396,14 @@ fn generate_static_preview(path: &Path) -> Result<PathBuf, String> {
         let status = match Command::new("ffmpeg")
             .args(["-y", "-hide_banner", "-loglevel", "error", "-i"])
             .arg(path)
-            .args(["-frames:v", "1", "-vf", "scale=1440:-1:flags=lanczos", "-q:v", "3"])
+            .args([
+                "-frames:v",
+                "1",
+                "-vf",
+                "scale=1440:-1:flags=lanczos",
+                "-q:v",
+                "3",
+            ])
             .arg(&cache_path)
             .status()
         {
@@ -553,7 +560,14 @@ fn try_ffmpeg(input: &Path, output: &Path) -> Result<bool, String> {
             "-i",
         ])
         .arg(input)
-        .args(["-frames:v", "1", "-vf", "scale=1440:-1:flags=lanczos", "-q:v", "3"])
+        .args([
+            "-frames:v",
+            "1",
+            "-vf",
+            "scale=1440:-1:flags=lanczos",
+            "-q:v",
+            "3",
+        ])
         .arg(output)
         .status()
     {
@@ -740,4 +754,112 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running jobowalls GUI");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn expands_home_prefixes() {
+        let Some(home) = dirs::home_dir() else {
+            return;
+        };
+
+        assert_eq!(expand_home(PathBuf::from("~")), home);
+        assert_eq!(
+            expand_home(PathBuf::from("~/Pictures")),
+            home.join("Pictures")
+        );
+        assert_eq!(
+            expand_home(PathBuf::from("/tmp/walls")),
+            PathBuf::from("/tmp/walls")
+        );
+    }
+
+    #[test]
+    fn scans_supported_wallpapers_sorted_case_insensitively() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("zeta.mp4"), b"video").unwrap();
+        fs::write(dir.path().join("Alpha.PNG"), b"image").unwrap();
+        fs::write(dir.path().join("notes.txt"), b"notes").unwrap();
+        fs::create_dir(dir.path().join("nested")).unwrap();
+
+        let items = scan_folder(dir.path().display().to_string()).unwrap();
+
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].name, "Alpha.PNG");
+        assert_eq!(items[0].kind, MediaKind::Static);
+        assert_eq!(items[1].name, "zeta.mp4");
+        assert_eq!(items[1].kind, MediaKind::Live);
+    }
+
+    #[test]
+    fn rejects_scan_folder_for_non_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("wall.png");
+        fs::write(&path, b"image").unwrap();
+
+        let error = scan_folder(path.display().to_string()).unwrap_err();
+
+        assert!(error.contains("not a folder"));
+    }
+
+    #[test]
+    fn classifies_gui_media_extensions() {
+        assert_eq!(
+            classify_path(Path::new("wall.JPG")),
+            Some(MediaKind::Static)
+        );
+        assert_eq!(classify_path(Path::new("rain.WEBM")), Some(MediaKind::Live));
+        assert_eq!(classify_path(Path::new("notes.txt")), None);
+    }
+
+    #[test]
+    fn chooses_preview_mime_from_path_extension() {
+        assert_eq!(mime_for_path(Path::new("wall.jpg")), "image/jpeg");
+        assert_eq!(mime_for_path(Path::new("wall.webp")), "image/webp");
+        assert_eq!(mime_for_path(Path::new("wall.gif")), "image/gif");
+        assert_eq!(mime_for_path(Path::new("wall.bmp")), "image/bmp");
+        assert_eq!(mime_for_path(Path::new("wall.png")), "image/png");
+    }
+
+    #[test]
+    fn builds_data_source_with_base64_payload() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("wall.png");
+        fs::write(&path, b"abc").unwrap();
+
+        let source = data_source("original.png".to_string(), &path).unwrap();
+
+        assert_eq!(source.path, "original.png");
+        assert_eq!(source.reason, None);
+        assert_eq!(source.src.as_deref(), Some("data:image/png;base64,YWJj"));
+    }
+
+    #[test]
+    fn cache_path_is_stable_for_unchanged_file_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rain.mp4");
+        fs::write(&path, b"same").unwrap();
+
+        let first = video_poster_cache_path(&path).unwrap();
+        let second = video_poster_cache_path(&path).unwrap();
+
+        assert_eq!(first, second);
+        assert!(first.to_string_lossy().ends_with(".poster-v2.jpg"));
+    }
+
+    #[test]
+    fn cache_path_changes_when_file_size_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rain.mp4");
+        fs::write(&path, b"short").unwrap();
+        let first = video_poster_cache_path(&path).unwrap();
+
+        fs::write(&path, b"longer content").unwrap();
+        let second = video_poster_cache_path(&path).unwrap();
+
+        assert_ne!(first, second);
+    }
 }

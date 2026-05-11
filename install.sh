@@ -80,7 +80,7 @@ EOF
 }
 
 install_or_permission_error() {
-  local destination="${@: -1}"
+  local destination="${!#}"
   if ! install "$@"; then
     explain_permission_failure "$destination"
     return 2
@@ -110,13 +110,14 @@ append_profile_path() {
     return
   fi
 
-  {
-    printf '\n%s\n' "$marker"
-    printf 'case ":$PATH:" in\n'
-    printf '  *":$HOME/.local/bin:"*) ;;\n'
-    printf '  *) export PATH="$HOME/.local/bin:$PATH" ;;\n'
-    printf 'esac\n'
-  } >>"$profile"
+  cat >>"$profile" <<EOF
+
+$marker
+case ":\$PATH:" in
+  *":\$HOME/.local/bin:"*) ;;
+  *) export PATH="\$HOME/.local/bin:\$PATH" ;;
+esac
+EOF
 }
 
 install_fish_path_config() {
@@ -131,6 +132,7 @@ end
 EOF
 
   if command -v fish >/dev/null 2>&1; then
+    # shellcheck disable=SC2016
     fish -c 'fish_add_path -U -- $argv[1]' -- "$HOME/.local/bin" >/dev/null 2>&1 || true
   fi
 }

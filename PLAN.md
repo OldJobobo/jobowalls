@@ -9,7 +9,7 @@ video. The user should issue one command or use one UI entry point, while
 
 Primary backend targets:
 
-- `hyprpaper` for static wallpapers.
+- `swaybg` for static wallpapers.
 - `mpvpaper` for live/video wallpapers.
 - Optional `awww` support for animated static-image transitions.
 - Optional `awww-daemon` lifecycle management when `awww` is enabled.
@@ -65,7 +65,7 @@ jobowalls
     persists current state
 
   Backend adapters
-    hyprpaper
+    swaybg
     mpvpaper
     awww optional
 
@@ -86,26 +86,23 @@ jobowalls
 
 ## Backend Responsibilities
 
-### hyprpaper
+### swaybg
 
 Use for static wallpapers when `awww` is disabled or unavailable.
 
 Responsibilities:
 
-- Ensure `hyprpaper` is running.
-- Preload image paths when needed.
-- Apply wallpapers per monitor.
-- Unload stale images only after the new wallpaper is visible.
-- Avoid restarting `hyprpaper` for normal wallpaper changes.
+- Start `swaybg` for the requested static wallpaper.
+- Target one monitor with `-o` when requested, or all outputs otherwise.
+- Track `jobowalls`-owned process IDs in state.
+- Stop only previously recorded `jobowalls`-owned `swaybg` processes for the
+  target monitor set before starting a replacement.
 
 Likely commands:
 
 ```bash
-hyprctl hyprpaper listloaded
-hyprpaper
-hyprctl hyprpaper preload /path/to/image.png
-hyprctl hyprpaper wallpaper "MONITOR,/path/to/image.png"
-hyprctl hyprpaper unload unused
+swaybg -i /path/to/image.png -m fill
+swaybg -i /path/to/image.png -m fill -o DP-1
 ```
 
 ### mpvpaper
@@ -135,18 +132,17 @@ implementation.
 ### awww
 
 Use optionally for static wallpapers when transitions matter. The
-out-of-the-box static path should prefer `hyprpaper` so the tool works with
-Omarchy defaults, but auto static backend selection may fall back to `awww` when
-`hyprpaper` is unavailable and `awww` is installed. If `awww.enabled = true`,
-auto static backend selection should prefer `awww`. A user can still force it
-for a single command with `--backend awww`.
+out-of-the-box static path should prefer `swaybg` so the tool works with
+Omarchy defaults. If `awww.enabled = true`, auto static backend selection should
+prefer `awww` when available. A user can still force it for a single command
+with `--backend awww`.
 
 Responsibilities:
 
 - Detect or start `awww-daemon`.
 - Apply image wallpapers with configured transition options.
-- Defer to `hyprpaper` if `awww` is disabled or unavailable.
-- Stop or ignore `hyprpaper` based on configured policy.
+- Defer to `swaybg` if `awww` is disabled or unavailable.
+- Stop owned live wallpaper processes after the new static wallpaper is visible.
 
 Example static transition intent:
 
@@ -199,7 +195,7 @@ Initial shape:
 
 ```toml
 [general]
-static_backend = "auto" # auto, hyprpaper, awww
+static_backend = "auto" # auto, swaybg, awww
 live_backend = "mpvpaper"
 restore_on_startup = true
 
@@ -213,9 +209,6 @@ backend = "auto"
 [monitors.profiles.HDMI-A-1]
 wallpaper = "/home/user/Videos/wallpapers/side.mp4"
 backend = "auto"
-
-[hyprpaper]
-unload_unused = true
 
 [mpvpaper]
 mode = "per-monitor"
@@ -268,7 +261,7 @@ Do not guess remote URLs in the first version. Require local files.
 Initial commands:
 
 ```text
-jobowalls set <path> [--monitor <name|all>] [--backend <auto|hyprpaper|mpvpaper|awww>]
+jobowalls set <path> [--monitor <name|all>] [--backend <auto|swaybg|mpvpaper|awww>]
 jobowalls status
 jobowalls stop
 jobowalls restore
@@ -380,7 +373,7 @@ src/
   orchestrator.rs
   backends/
     mod.rs
-    hyprpaper.rs
+    swaybg.rs
     mpvpaper.rs
     awww.rs
 ```
@@ -499,7 +492,7 @@ exec-once = jobowalls restore
 
 - Hyprland session detected.
 - `hyprctl` available.
-- `hyprpaper` available.
+- `swaybg` available.
 - `mpvpaper` available.
 - `awww` and `awww-daemon` availability.
 - Active monitors.
@@ -510,7 +503,7 @@ exec-once = jobowalls restore
 
 Build a minimal CLI that supports:
 
-- `jobowalls set <static-image>` via `hyprpaper`.
+- `jobowalls set <static-image>` via `swaybg`.
 - `jobowalls set <video>` via `mpvpaper`.
 - `jobowalls stop` to stop owned live wallpaper processes.
 - `jobowalls status` to print the state file.

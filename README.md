@@ -5,7 +5,7 @@ static and live wallpapers.
 
 It chooses the right backend underneath:
 
-- `swaybg` or `hyprpaper` for static images
+- `swaybg` for static images
 - `mpvpaper` for live/video wallpapers
 - optional `awww` support for static image transitions
 
@@ -51,7 +51,6 @@ release binary is available:
 Runtime backends:
 
 - `swaybg` for Omarchy/default static wallpapers
-- `hyprpaper` for static wallpapers on systems that use it
 - `mpvpaper` for live wallpapers
 - `awww` and `awww-daemon` if you want optional static transitions
 
@@ -181,7 +180,6 @@ Force a static backend:
 
 ```bash
 jobowalls set ~/Pictures/wallpapers/main.png --backend swaybg
-jobowalls set ~/Pictures/wallpapers/main.png --backend hyprpaper
 ```
 
 Machine-readable dry run:

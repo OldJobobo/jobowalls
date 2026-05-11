@@ -239,4 +239,38 @@ mod tests {
         assert_eq!(index, 2);
         assert_eq!(path, PathBuf::from("/tmp/c.jpg"));
     }
+
+    #[test]
+    fn persistent_previous_uses_saved_wallpaper_when_index_is_invalid() {
+        let files = vec![
+            "/tmp/a.jpg".into(),
+            "/tmp/b.jpg".into(),
+            "/tmp/c.jpg".into(),
+        ];
+        let state = CollectionState {
+            last_index: Some(99),
+            last_wallpaper: Some("/tmp/b.jpg".to_string()),
+            shuffle_history: Vec::new(),
+        };
+
+        let (index, path) = select_previous_persistent(&files, Some(&state), None);
+
+        assert_eq!(index, 0);
+        assert_eq!(path, PathBuf::from("/tmp/a.jpg"));
+    }
+
+    #[test]
+    fn persistent_shuffle_reuses_history_after_exhaustion() {
+        let files = vec!["/tmp/a.jpg".into(), "/tmp/b.jpg".into()];
+        let state = CollectionState {
+            last_index: Some(0),
+            last_wallpaper: Some("/tmp/a.jpg".to_string()),
+            shuffle_history: vec!["/tmp/a.jpg".to_string(), "/tmp/b.jpg".to_string()],
+        };
+
+        let (index, path) = select_shuffle_persistent(&files, Some(&state), None, 0);
+
+        assert_eq!(index, 1);
+        assert_eq!(path, PathBuf::from("/tmp/b.jpg"));
+    }
 }

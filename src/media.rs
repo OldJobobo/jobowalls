@@ -111,4 +111,30 @@ mod tests {
 
         assert_eq!(classify_path(&path).unwrap(), MediaKind::Static);
     }
+
+    #[test]
+    fn classifies_extensionless_media_signatures() {
+        let dir = tempfile::tempdir().unwrap();
+        let cases = [
+            ("jpeg", b"\xff\xd8\xffrest".as_slice(), MediaKind::Static),
+            (
+                "webp",
+                b"RIFF\x00\x00\x00\x00WEBPrest".as_slice(),
+                MediaKind::Static,
+            ),
+            (
+                "mp4",
+                b"\x00\x00\x00\x18ftypisomrest".as_slice(),
+                MediaKind::Live,
+            ),
+            ("webm", b"\x1a\x45\xdf\xa3rest".as_slice(), MediaKind::Live),
+        ];
+
+        for (name, bytes, expected) in cases {
+            let path = dir.path().join(name);
+            fs::write(&path, bytes).unwrap();
+
+            assert_eq!(classify_path(&path).unwrap(), expected, "{name}");
+        }
+    }
 }

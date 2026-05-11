@@ -19,7 +19,7 @@ makedepends=(
   'nodejs'
 )
 optdepends=(
-  'hyprpaper: static wallpaper backend'
+  'swaybg: static wallpaper backend'
   'mpvpaper: live/video wallpaper backend'
   'awww: optional static image transitions'
   'ffmpeg: animated live wallpaper previews in jobowalls-gui and jobowalls-shell'

@@ -52,7 +52,7 @@ Behavior:
 - No permanent sidebar.
 - No playlist editor.
 - No tag, rating, or metadata system.
-- No direct `swaybg`, `hyprpaper`, `mpvpaper`, or `awww` process control.
+- No direct `swaybg`, `mpvpaper`, or `awww` process control.
 - No Hyprland config edits during normal app execution.
 - No requirement that users install AGS.
 

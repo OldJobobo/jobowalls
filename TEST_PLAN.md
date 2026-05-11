@@ -50,13 +50,6 @@ Static `swaybg`:
 - Replaces only recorded owned `swaybg` PID for the targeted monitor.
 - Writes state with backend `swaybg`, monitor entry, PID, and last command.
 
-Static `hyprpaper`:
-
-- Forced `--backend hyprpaper` uses daemon reachability check, preload,
-  wallpaper, and unload in the expected order.
-- `--monitor all` expands active monitors from fake `hyprctl`.
-- `hyprpaper.unload_unused = false` skips unload.
-
 Static `awww`:
 
 - Forced `--backend awww` starts/checks daemon and runs `awww img`.
@@ -219,7 +212,7 @@ Add lightweight checks for:
 - Monitor names with punctuation, especially for mpv IPC socket sanitization.
 - Media signature tests for extensionless MP4, WebM, JPEG, and WebP.
 - Backend override rejection for every invalid pair: `mpvpaper` with image and
-  `hyprpaper`/`awww`/`swaybg` with video.
+  `awww`/`swaybg` with video.
 - `doctor` output smoke test with fake commands, especially stale PID reporting.
 - Concurrency around GUI thumbnail lock: two callers requesting the same cache
   path should not run generation twice after a cached file appears.

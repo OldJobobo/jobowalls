@@ -5,7 +5,6 @@ use std::fmt;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Backend {
-    Hyprpaper,
     Mpvpaper,
     Awww,
     Swaybg,
@@ -14,7 +13,6 @@ pub enum Backend {
 impl fmt::Display for Backend {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Backend::Hyprpaper => write!(f, "hyprpaper"),
             Backend::Mpvpaper => write!(f, "mpvpaper"),
             Backend::Awww => write!(f, "awww"),
             Backend::Swaybg => write!(f, "swaybg"),

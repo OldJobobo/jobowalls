@@ -9,7 +9,7 @@ Planned runtime paths from the design:
 - CLI entry point: `jobowalls`
 - User config: `~/.config/jobowalls/config.toml`
 - State file: `~/.local/state/jobowalls/state.json`
-- Backends: `hyprpaper` for static images, `mpvpaper` for video/live wallpapers,
+- Backends: `swaybg` for static images, `mpvpaper` for video/live wallpapers,
   and optional `awww` support for static transitions.
 
 Code lives under `src/`: `cli.rs` parses commands, `orchestrator.rs` chooses
