@@ -17,6 +17,8 @@ versioning while the project is pre-1.0.
   launch-time overrides.
 - Made the GUI consume active Omarchy theme colors from
   `~/.config/omarchy/current/theme/colors.toml`.
+- Documented `jobowalls stop-live` as the command to shut down
+  `jobowalls`-managed live wallpapers before using external wallpaper pickers.
 
 ## 0.1.13 - 2026-05-11
 

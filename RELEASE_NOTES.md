@@ -16,6 +16,9 @@ integration.
 - GUI controls now respect Omarchy theme colors from the active theme palette.
 - Release tarballs include `VERSION`, `CHANGELOG.md`, and `RELEASE_NOTES.md`
   under `share/doc/jobowalls`.
+- The README now calls out `jobowalls stop-live` for cleanly terminating
+  `jobowalls`-managed live wallpapers before another picker sets a static
+  background.
 
 ### Upgrade
 
