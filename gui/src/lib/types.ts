@@ -1,4 +1,5 @@
 export type MediaKind = "static" | "live";
+export type PreviewQuality = "fast" | "balanced" | "pretty";
 
 export type WallpaperItem = {
   path: string;

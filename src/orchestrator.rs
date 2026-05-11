@@ -31,19 +31,7 @@ impl SetPlan {
     }
 
     pub fn from_state(state: &State) -> Result<Self> {
-        let monitor = state
-            .monitors
-            .keys()
-            .next()
-            .cloned()
-            .unwrap_or_else(|| "all".to_string());
-
-        Ok(Self {
-            wallpaper: PathBuf::from(&state.wallpaper),
-            media_kind: state.mode,
-            backend: state.active_backend,
-            monitor,
-        })
+        state.single_monitor_plan()
     }
 }
 

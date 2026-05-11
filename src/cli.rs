@@ -23,6 +23,7 @@ use std::{
     io::{BufRead, BufReader, Write},
     os::unix::net::UnixStream,
     path::{Path, PathBuf},
+    process::Child,
     time::{Duration, Instant},
 };
 
@@ -471,6 +472,7 @@ fn apply_runtime_auto_backend(plan: &mut SetPlan, config: &Config, backend_arg: 
 }
 
 fn execute_set_plan(plan: &SetPlan, config: &Config, state_path: &std::path::Path) -> Result<()> {
+    ensure_backend_available(plan.backend)?;
     let existing_state = State::load(state_path)?;
     let existing_collections = existing_state
         .as_ref()
@@ -554,7 +556,9 @@ fn execute_set_plan(plan: &SetPlan, config: &Config, state_path: &std::path::Pat
             stop_owned_live_for_monitors(state_path, &target_monitors)?;
             terminate_pids(&omarchy_swaybg_pids())?;
 
-            let pid = swaybg::start_command(plan).spawn_detached()?;
+            let mut child = swaybg::start_command(plan).spawn_detached_child()?;
+            ensure_spawned_process_still_running(&mut child, "swaybg")?;
+            let pid = child.id();
             let mut state = State::merged_with_monitor_entries(
                 existing_state.as_ref(),
                 plan,
@@ -572,6 +576,42 @@ fn execute_set_plan(plan: &SetPlan, config: &Config, state_path: &std::path::Pat
         }
     }
 
+    Ok(())
+}
+
+fn ensure_backend_available(backend: Backend) -> Result<()> {
+    if backend_adapter(backend).is_available() {
+        return Ok(());
+    }
+
+    match backend {
+        Backend::Swaybg | Backend::Awww | Backend::Mpvpaper => {
+            bail!("{}", unavailable_backend_message(backend))
+        }
+    }
+}
+
+fn unavailable_backend_message(backend: Backend) -> &'static str {
+    match backend {
+        Backend::Swaybg => {
+            "static backend `swaybg` is not available; install swaybg or enable/install awww"
+        }
+        Backend::Awww => {
+            "static backend `awww` is not available; install awww and awww-daemon or use swaybg"
+        }
+        Backend::Mpvpaper => "live backend `mpvpaper` is not available; install mpvpaper",
+    }
+}
+
+fn ensure_spawned_process_still_running(child: &mut Child, description: &str) -> Result<()> {
+    std::thread::sleep(Duration::from_millis(50));
+    if child
+        .try_wait()
+        .with_context(|| format!("failed to inspect {description} process"))?
+        .is_some()
+    {
+        bail!("{description} exited immediately after start");
+    }
     Ok(())
 }
 
@@ -695,39 +735,13 @@ fn execute_restore(state: &State, config: &Config, state_path: &std::path::Path)
         return Ok(());
     }
 
-    if state.active_backend != Backend::Mpvpaper {
-        let plan = SetPlan::from_state(state)?;
-        execute_set_plan(&plan, config, state_path)?;
-        if let Some(mut restored_state) = State::load(state_path)? {
-            restored_state.record_last_command("restore");
-            restored_state.save(state_path)?;
-        }
-        return Ok(());
-    }
-
-    let previous_live_pids = owned_live_pids(state);
     let plans = state.monitor_plans();
-    let started = start_mpvpaper_plans(&plans, config)?;
-    if let Err(error) = wait_for_mpvpaper_readiness(&started, config.mpvpaper.readiness_timeout_ms)
-    {
-        let new_pids = started_mpvpaper_pids(&started);
-        let _ = terminate_pids(&new_pids);
-        bail!("restored live wallpaper did not become ready: {error}");
+    for plan in plans {
+        execute_set_plan(&plan, config, state_path)?;
     }
-    let entries = started_mpvpaper_entries(&started);
-    terminate_pids(&previous_live_pids)?;
-    let mut restored_state = State::from_restored_entries(
-        Backend::Mpvpaper,
-        state.mode,
-        state.wallpaper.clone(),
-        entries.clone(),
-    )
-    .with_last_command("restore");
-    restored_state.collections = state.collections.clone();
-    restored_state.save(state_path)?;
-
-    if let Some(plan) = plans.first() {
-        print_live_started(plan, &entries);
+    if let Some(mut restored_state) = State::load(state_path)? {
+        restored_state.record_last_command("restore");
+        restored_state.save(state_path)?;
     }
 
     Ok(())
@@ -783,17 +797,8 @@ fn print_restore_plan(state: &State, config: &Config) -> Result<()> {
     println!("restore mode: {:?}", state.mode);
     println!("restore wallpaper: {}", state.wallpaper);
 
-    if state.active_backend != Backend::Mpvpaper {
-        let plan = SetPlan::from_state(state)?;
-        print_set_plan(&plan, config)?;
-        return Ok(());
-    }
-
     for plan in state.monitor_plans() {
-        println!(
-            "command: {}",
-            mpvpaper::start_command(&plan, &config.mpvpaper)
-        );
+        print_set_plan(&plan, config)?;
     }
 
     Ok(())
@@ -1084,21 +1089,20 @@ fn parse_omarchy_swaybg_pid(line: &str, home: Option<&Path>) -> Option<u32> {
     let line = line.trim();
     let (pid, command) = line.split_once(char::is_whitespace)?;
     let pid = pid.parse().ok()?;
-    if !command
-        .split_whitespace()
-        .next()
+    let args = command.split_whitespace().collect::<Vec<_>>();
+    if !args
+        .first()
         .is_some_and(|program| program.ends_with("swaybg"))
     {
-        return None;
-    }
-    if !command.split_whitespace().any(|arg| arg == "-i") {
         return None;
     }
 
     let home = home?;
     let omarchy_background = home.join(".config/omarchy/current/background");
-    command
-        .contains(&omarchy_background.display().to_string())
+    let omarchy_background = omarchy_background.to_string_lossy();
+
+    args.windows(2)
+        .any(|args| args[0] == "-i" && args[1] == omarchy_background)
         .then_some(pid)
 }
 
@@ -1544,6 +1548,22 @@ mod tests {
     }
 
     #[test]
+    fn unavailable_backend_messages_include_install_or_config_action() {
+        assert_eq!(
+            unavailable_backend_message(Backend::Swaybg),
+            "static backend `swaybg` is not available; install swaybg or enable/install awww"
+        );
+        assert_eq!(
+            unavailable_backend_message(Backend::Awww),
+            "static backend `awww` is not available; install awww and awww-daemon or use swaybg"
+        );
+        assert_eq!(
+            unavailable_backend_message(Backend::Mpvpaper),
+            "live backend `mpvpaper` is not available; install mpvpaper"
+        );
+    }
+
+    #[test]
     fn live_pause_decision_respects_enabled_triggers() {
         let mut config = Config::default();
         config.live.pause.on_fullscreen = false;
@@ -1567,6 +1587,27 @@ mod tests {
         );
         assert_eq!(
             parse_omarchy_swaybg_pid("2107 /usr/bin/swaybg -i /tmp/other.jpg -m fill", Some(home)),
+            None
+        );
+        assert_eq!(
+            parse_omarchy_swaybg_pid(
+                "2108 /usr/bin/swaybg -m fill --comment /home/tester/.config/omarchy/current/background",
+                Some(home),
+            ),
+            None
+        );
+        assert_eq!(
+            parse_omarchy_swaybg_pid(
+                "2109 /usr/bin/swaybg -i /home/tester/.config/omarchy/current/background -m fill",
+                None,
+            ),
+            None
+        );
+        assert_eq!(
+            parse_omarchy_swaybg_pid(
+                "2110 /usr/bin/other -i /home/tester/.config/omarchy/current/background -m fill",
+                Some(home),
+            ),
             None
         );
     }

@@ -19,6 +19,13 @@ pub struct State {
     pub updated_at: OffsetDateTime,
 }
 
+fn media_kind_for_backend(backend: Backend) -> MediaKind {
+    match backend {
+        Backend::Mpvpaper => MediaKind::Live,
+        Backend::Awww | Backend::Swaybg => MediaKind::Static,
+    }
+}
+
 impl State {
     pub fn from_set_plan(plan: &SetPlan, pid: Option<u32>) -> Self {
         Self::from_monitor_entries(plan, [(plan.monitor.clone(), pid)])
@@ -142,18 +149,20 @@ impl State {
     }
 
     pub fn single_monitor_plan(&self) -> Result<SetPlan> {
-        let monitor = self
-            .monitors
-            .keys()
-            .next()
-            .cloned()
-            .unwrap_or_else(|| "all".to_string());
+        if let Some((monitor, state)) = self.monitors.iter().next() {
+            return Ok(SetPlan {
+                wallpaper: state.wallpaper.clone().into(),
+                media_kind: media_kind_for_backend(state.backend),
+                backend: state.backend,
+                monitor: monitor.clone(),
+            });
+        }
 
         Ok(SetPlan {
             wallpaper: self.wallpaper.clone().into(),
             media_kind: self.mode,
             backend: self.active_backend,
-            monitor,
+            monitor: "all".to_string(),
         })
     }
 
@@ -168,11 +177,11 @@ impl State {
         }
 
         self.monitors
-            .keys()
-            .map(|monitor| SetPlan {
-                wallpaper: self.wallpaper.clone().into(),
-                media_kind: self.mode,
-                backend: self.active_backend,
+            .iter()
+            .map(|(monitor, state)| SetPlan {
+                wallpaper: state.wallpaper.clone().into(),
+                media_kind: media_kind_for_backend(state.backend),
+                backend: state.backend,
                 monitor: monitor.clone(),
             })
             .collect()
@@ -391,6 +400,53 @@ mod tests {
         assert_eq!(state.monitors["DP-1"].backend, Backend::Swaybg);
         assert_eq!(state.monitors["HDMI-A-1"].backend, Backend::Mpvpaper);
         assert_eq!(state.monitors["HDMI-A-1"].pid, Some(101));
+    }
+
+    #[test]
+    fn monitor_plans_use_per_monitor_state_for_mixed_outputs() {
+        let static_plan = SetPlan {
+            wallpaper: "/tmp/top-level.png".into(),
+            media_kind: MediaKind::Static,
+            backend: Backend::Swaybg,
+            monitor: "all".to_string(),
+        };
+        let mut state = State::from_set_plan(&static_plan, None);
+        state.wallpaper = "/tmp/top-level.png".to_string();
+        state.active_backend = Backend::Swaybg;
+        state.mode = MediaKind::Static;
+        state.monitors.clear();
+        state.monitors.insert(
+            "DP-1".to_string(),
+            MonitorState {
+                backend: Backend::Swaybg,
+                wallpaper: "/tmp/wall.png".to_string(),
+                pid: Some(200),
+            },
+        );
+        state.monitors.insert(
+            "HDMI-A-1".to_string(),
+            MonitorState {
+                backend: Backend::Mpvpaper,
+                wallpaper: "/tmp/rain.mp4".to_string(),
+                pid: Some(100),
+            },
+        );
+
+        let plans = state.monitor_plans();
+
+        assert_eq!(plans.len(), 2);
+        assert!(plans.iter().any(|plan| {
+            plan.monitor == "DP-1"
+                && plan.backend == Backend::Swaybg
+                && plan.media_kind == MediaKind::Static
+                && plan.wallpaper == Path::new("/tmp/wall.png")
+        }));
+        assert!(plans.iter().any(|plan| {
+            plan.monitor == "HDMI-A-1"
+                && plan.backend == Backend::Mpvpaper
+                && plan.media_kind == MediaKind::Live
+                && plan.wallpaper == Path::new("/tmp/rain.mp4")
+        }));
     }
 
     #[test]

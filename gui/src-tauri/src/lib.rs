@@ -3,11 +3,14 @@ use std::{
     collections::HashSet,
     fs,
     path::{Path, PathBuf},
-    process::Command,
-    sync::{Mutex, OnceLock},
+    process::{Child, Command},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Mutex, OnceLock,
+    },
     time::{SystemTime, UNIX_EPOCH},
 };
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 use base64::{engine::general_purpose, Engine as _};
 
@@ -16,6 +19,51 @@ use base64::{engine::general_purpose, Engine as _};
 enum MediaKind {
     Static,
     Live,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum PreviewQuality {
+    Fast,
+    Balanced,
+    Pretty,
+}
+
+impl PreviewQuality {
+    fn profile(self) -> LivePreviewProfile {
+        match self {
+            Self::Fast => LivePreviewProfile {
+                duration_secs: 2,
+                fps: 6,
+                width: 540,
+                crf: 30,
+                cache_name: "preview-fast-v1.mp4",
+            },
+            Self::Balanced => LivePreviewProfile {
+                duration_secs: 3,
+                fps: 8,
+                width: 720,
+                crf: 28,
+                cache_name: "preview-balanced-v1.mp4",
+            },
+            Self::Pretty => LivePreviewProfile {
+                duration_secs: 4,
+                fps: 10,
+                width: 1080,
+                crf: 24,
+                cache_name: "preview-pretty-v1.mp4",
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct LivePreviewProfile {
+    duration_secs: u8,
+    fps: u8,
+    width: u16,
+    crf: u8,
+    cache_name: &'static str,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -225,10 +273,9 @@ fn get_media_source(path: String) -> Result<MediaSource, String> {
         });
     };
 
-    let preview_path = if matches!(kind, MediaKind::Live) {
-        generate_video_poster(&path_buf)?
-    } else {
-        path_buf
+    let preview_path = match kind {
+        MediaKind::Static => generate_static_preview(&path_buf).unwrap_or(path_buf),
+        MediaKind::Live => generate_video_poster(&path_buf)?,
     };
 
     Ok(MediaSource {
@@ -259,15 +306,57 @@ fn get_media_data_source(path: String) -> Result<MediaSource, String> {
 }
 
 #[tauri::command]
-fn get_live_preview_source(path: String) -> Result<MediaSource, String> {
+fn get_thumbnail_source(path: String) -> Result<MediaSource, String> {
+    let path_buf = PathBuf::from(&path);
+    let Some(kind) = classify_path(&path_buf) else {
+        return Ok(MediaSource {
+            path,
+            src: None,
+            reason: Some("unsupported media type".to_string()),
+        });
+    };
+
+    let preview_path = match kind {
+        MediaKind::Static => generate_static_thumbnail(&path_buf)?,
+        MediaKind::Live => generate_video_thumbnail(&path_buf)?,
+    };
+
+    Ok(MediaSource {
+        path,
+        src: Some(preview_path.display().to_string()),
+        reason: None,
+    })
+}
+
+#[tauri::command]
+fn get_thumbnail_data_source(path: String) -> Result<MediaSource, String> {
+    let path_buf = PathBuf::from(&path);
+    let Some(kind) = classify_path(&path_buf) else {
+        return Ok(MediaSource {
+            path,
+            src: None,
+            reason: Some("unsupported media type".to_string()),
+        });
+    };
+
+    let preview_path = match kind {
+        MediaKind::Static => generate_static_thumbnail(&path_buf)?,
+        MediaKind::Live => generate_video_thumbnail(&path_buf)?,
+    };
+
+    data_source(path, &preview_path)
+}
+
+#[tauri::command]
+fn get_live_preview_source(path: String, quality: PreviewQuality) -> Result<MediaSource, String> {
     let path_buf = PathBuf::from(&path);
     if !matches!(classify_path(&path_buf), Some(MediaKind::Live)) {
         return get_media_source(path);
     }
 
-    let preview_path = match cached_video_animation_path(&path_buf) {
+    let preview_path = match cached_video_animation_path(&path_buf, quality) {
         Ok(Some(path)) => path,
-        _ => generate_video_animation(&path_buf)?,
+        _ => generate_video_animation(&path_buf, quality)?,
     };
     Ok(MediaSource {
         path,
@@ -277,15 +366,15 @@ fn get_live_preview_source(path: String) -> Result<MediaSource, String> {
 }
 
 #[tauri::command]
-fn get_live_preview_data_source(path: String) -> Result<MediaSource, String> {
+fn get_live_preview_data_source(path: String, quality: PreviewQuality) -> Result<MediaSource, String> {
     let path_buf = PathBuf::from(&path);
     if !matches!(classify_path(&path_buf), Some(MediaKind::Live)) {
         return get_media_data_source(path);
     }
 
-    let preview_path = match cached_video_animation_path(&path_buf) {
+    let preview_path = match cached_video_animation_path(&path_buf, quality) {
         Ok(Some(path)) => path,
-        _ => generate_video_animation(&path_buf)?,
+        _ => generate_video_animation(&path_buf, quality)?,
     };
     data_source(path, &preview_path)
 }
@@ -298,11 +387,7 @@ fn warm_live_preview(path: String) -> Result<(), String> {
     }
 
     std::thread::spawn(move || {
-        let _ = generate_video_poster(&path_buf);
-        let _ = cached_video_animation_path(&path_buf)
-            .ok()
-            .flatten()
-            .or_else(|| generate_video_animation(&path_buf).ok());
+        let _ = generate_video_thumbnail(&path_buf);
     });
 
     Ok(())
@@ -400,9 +485,9 @@ fn generate_static_preview(path: &Path) -> Result<PathBuf, String> {
                 "-frames:v",
                 "1",
                 "-vf",
-                "scale=1440:-1:flags=lanczos",
+                "scale=960:-1:flags=fast_bilinear",
                 "-q:v",
-                "3",
+                "5",
             ])
             .arg(&cache_path)
             .status()
@@ -425,6 +510,55 @@ fn generate_static_preview(path: &Path) -> Result<PathBuf, String> {
     })
 }
 
+fn generate_static_thumbnail(path: &Path) -> Result<PathBuf, String> {
+    let cache_path = static_thumbnail_cache_path(path)?;
+    if cache_path.exists() {
+        return Ok(cache_path);
+    }
+
+    if let Some(parent) = cache_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "failed to create thumbnail cache {}: {error}",
+                parent.display()
+            )
+        })?;
+    }
+
+    with_generation_lock(cache_path.clone(), || {
+        if cache_path.exists() {
+            return Ok(cache_path);
+        }
+
+        let status = match Command::new("ffmpeg")
+            .args(["-y", "-hide_banner", "-loglevel", "error", "-i"])
+            .arg(path)
+            .args([
+                "-frames:v",
+                "1",
+                "-vf",
+                "scale=520:-1:flags=fast_bilinear",
+                "-q:v",
+                "5",
+            ])
+            .arg(&cache_path)
+            .status()
+        {
+            Ok(status) => status,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(path.to_path_buf());
+            }
+            Err(error) => return Err(format!("failed to start ffmpeg: {error}")),
+        };
+
+        if status.success() && cache_path.exists() {
+            Ok(cache_path)
+        } else {
+            Ok(path.to_path_buf())
+        }
+    })
+}
+
 fn mime_for_path(path: &Path) -> &'static str {
     match path
         .extension()
@@ -436,6 +570,7 @@ fn mime_for_path(path: &Path) -> &'static str {
         Some("webp") => "image/webp",
         Some("gif") => "image/gif",
         Some("bmp") => "image/bmp",
+        Some("mp4") => "video/mp4",
         _ => "image/png",
     }
 }
@@ -465,8 +600,36 @@ fn generate_video_poster(path: &Path) -> Result<PathBuf, String> {
     )
 }
 
-fn generate_video_animation(path: &Path) -> Result<PathBuf, String> {
-    let cache_path = video_animation_cache_path(path)?;
+fn generate_video_thumbnail(path: &Path) -> Result<PathBuf, String> {
+    let cache_path = video_thumbnail_cache_path(path)?;
+    if cache_path.exists() {
+        return Ok(cache_path);
+    }
+
+    if let Some(parent) = cache_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "failed to create thumbnail cache {}: {error}",
+                parent.display()
+            )
+        })?;
+    }
+
+    if try_ffmpegthumbnailer_with_size(path, &cache_path, 520)?
+        || try_ffmpeg_with_size(path, &cache_path, 520)?
+    {
+        return Ok(cache_path);
+    }
+
+    generate_video_poster(path)
+}
+
+fn generate_video_animation(path: &Path, quality: PreviewQuality) -> Result<PathBuf, String> {
+    let token = next_live_preview_token();
+    cancel_stale_live_preview(token);
+
+    let profile = quality.profile();
+    let cache_path = video_animation_cache_path(path, quality)?;
     if cache_path.exists() {
         return Ok(cache_path);
     }
@@ -480,12 +643,23 @@ fn generate_video_animation(path: &Path) -> Result<PathBuf, String> {
         })?;
     }
 
+    let _live_generation = live_preview_generation_lock()
+        .lock()
+        .map_err(|_| "failed to lock live preview generation".to_string())?;
+
     with_generation_lock(cache_path.clone(), || {
         if cache_path.exists() {
             return Ok(cache_path);
         }
 
-        let status = match Command::new("ffmpeg")
+        let _ = fs::remove_file(&cache_path);
+        let duration = profile.duration_secs.to_string();
+        let filter = format!(
+            "fps={},scale={}:-2:flags=fast_bilinear",
+            profile.fps, profile.width
+        );
+        let crf = profile.crf.to_string();
+        let child = match Command::new("ffmpeg")
             .args([
                 "-y",
                 "-hide_banner",
@@ -494,50 +668,157 @@ fn generate_video_animation(path: &Path) -> Result<PathBuf, String> {
                 "-ss",
                 "00:00:00.5",
                 "-t",
-                "1",
+                &duration,
                 "-i",
             ])
             .arg(path)
             .args([
                 "-vf",
-                "fps=10,scale=1080:-1:flags=lanczos",
-                "-loop",
-                "0",
-                "-quality",
-                "82",
-                "-compression_level",
-                "4",
+                &filter,
+                "-an",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "veryfast",
+                "-crf",
+                &crf,
+                "-pix_fmt",
+                "yuv420p",
+                "-movflags",
+                "+faststart",
             ])
             .arg(&cache_path)
-            .status()
+            .spawn()
         {
-            Ok(status) => status,
+            Ok(child) => child,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 return generate_video_poster(path);
             }
             Err(error) => return Err(format!("failed to start ffmpeg: {error}")),
         };
+        record_live_preview_child(token, child);
+
+        let status = loop {
+            if live_preview_token().load(Ordering::SeqCst) != token {
+                cancel_recorded_live_preview(token);
+                let _ = fs::remove_file(&cache_path);
+                return Err("stale live preview request cancelled".to_string());
+            }
+
+            let Some(status) = poll_recorded_live_preview(token)? else {
+                std::thread::sleep(std::time::Duration::from_millis(35));
+                continue;
+            };
+            break status;
+        };
+        clear_recorded_live_preview(token);
 
         if status.success() && cache_path.exists() {
             Ok(cache_path)
         } else {
+            let _ = fs::remove_file(&cache_path);
             generate_video_poster(path)
         }
     })
 }
 
-fn cached_video_animation_path(path: &Path) -> Result<Option<PathBuf>, String> {
-    let cache_path = video_animation_cache_path(path)?;
+fn cached_video_animation_path(path: &Path, quality: PreviewQuality) -> Result<Option<PathBuf>, String> {
+    let cache_path = video_animation_cache_path(path, quality)?;
     Ok(cache_path.exists().then_some(cache_path))
 }
 
+struct ActiveLivePreview {
+    token: u64,
+    child: Child,
+}
+
+fn live_preview_token() -> &'static AtomicU64 {
+    static TOKEN: AtomicU64 = AtomicU64::new(0);
+    &TOKEN
+}
+
+fn next_live_preview_token() -> u64 {
+    live_preview_token().fetch_add(1, Ordering::SeqCst) + 1
+}
+
+fn live_preview_generation_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn active_live_preview() -> &'static Mutex<Option<ActiveLivePreview>> {
+    static ACTIVE: OnceLock<Mutex<Option<ActiveLivePreview>>> = OnceLock::new();
+    ACTIVE.get_or_init(|| Mutex::new(None))
+}
+
+fn cancel_stale_live_preview(token: u64) {
+    let Ok(mut active) = active_live_preview().lock() else {
+        return;
+    };
+    if let Some(active_preview) = active.as_mut() {
+        if active_preview.token != token {
+            let _ = active_preview.child.kill();
+        }
+    }
+}
+
+fn record_live_preview_child(token: u64, child: Child) {
+    if let Ok(mut active) = active_live_preview().lock() {
+        if let Some(active_preview) = active.as_mut() {
+            let _ = active_preview.child.kill();
+        }
+        *active = Some(ActiveLivePreview { token, child });
+    }
+}
+
+fn poll_recorded_live_preview(token: u64) -> Result<Option<std::process::ExitStatus>, String> {
+    let mut active = active_live_preview()
+        .lock()
+        .map_err(|_| "failed to lock active live preview".to_string())?;
+    let Some(active_preview) = active.as_mut() else {
+        return Ok(None);
+    };
+    if active_preview.token != token {
+        return Ok(None);
+    }
+
+    active_preview
+        .child
+        .try_wait()
+        .map_err(|error| format!("failed to poll ffmpeg preview process: {error}"))
+}
+
+fn cancel_recorded_live_preview(token: u64) {
+    let Ok(mut active) = active_live_preview().lock() else {
+        return;
+    };
+    if let Some(active_preview) = active.as_mut() {
+        if active_preview.token == token {
+            let _ = active_preview.child.kill();
+        }
+    }
+}
+
+fn clear_recorded_live_preview(token: u64) {
+    let Ok(mut active) = active_live_preview().lock() else {
+        return;
+    };
+    if active.as_ref().is_some_and(|active| active.token == token) {
+        *active = None;
+    }
+}
+
 fn try_ffmpegthumbnailer(input: &Path, output: &Path) -> Result<bool, String> {
+    try_ffmpegthumbnailer_with_size(input, output, 960)
+}
+
+fn try_ffmpegthumbnailer_with_size(input: &Path, output: &Path, size: u32) -> Result<bool, String> {
     let status = match Command::new("ffmpegthumbnailer")
         .args(["-i"])
         .arg(input)
         .args(["-o"])
         .arg(output)
-        .args(["-s", "1440", "-q", "9", "-t", "10%"])
+        .args(["-s", &size.to_string(), "-q", "8", "-t", "10%"])
         .status()
     {
         Ok(status) => status,
@@ -549,6 +830,10 @@ fn try_ffmpegthumbnailer(input: &Path, output: &Path) -> Result<bool, String> {
 }
 
 fn try_ffmpeg(input: &Path, output: &Path) -> Result<bool, String> {
+    try_ffmpeg_with_size(input, output, 960)
+}
+
+fn try_ffmpeg_with_size(input: &Path, output: &Path, width: u32) -> Result<bool, String> {
     let status = match Command::new("ffmpeg")
         .args([
             "-y",
@@ -564,9 +849,9 @@ fn try_ffmpeg(input: &Path, output: &Path) -> Result<bool, String> {
             "-frames:v",
             "1",
             "-vf",
-            "scale=1440:-1:flags=lanczos",
+            &format!("scale={width}:-1:flags=fast_bilinear"),
             "-q:v",
-            "3",
+            "5",
         ])
         .arg(output)
         .status()
@@ -580,15 +865,23 @@ fn try_ffmpeg(input: &Path, output: &Path) -> Result<bool, String> {
 }
 
 fn video_poster_cache_path(path: &Path) -> Result<PathBuf, String> {
-    video_cache_path(path, "poster-v2.jpg")
+    video_cache_path(path, "poster-v3.jpg")
+}
+
+fn video_thumbnail_cache_path(path: &Path) -> Result<PathBuf, String> {
+    video_cache_path(path, "thumb-v1.jpg")
 }
 
 fn static_preview_cache_path(path: &Path) -> Result<PathBuf, String> {
-    video_cache_path(path, "static-v2.jpg")
+    video_cache_path(path, "static-v3.jpg")
 }
 
-fn video_animation_cache_path(path: &Path) -> Result<PathBuf, String> {
-    video_cache_path(path, "preview-v3.webp")
+fn static_thumbnail_cache_path(path: &Path) -> Result<PathBuf, String> {
+    video_cache_path(path, "static-thumb-v1.jpg")
+}
+
+fn video_animation_cache_path(path: &Path, quality: PreviewQuality) -> Result<PathBuf, String> {
+    video_cache_path(path, quality.profile().cache_name)
 }
 
 fn video_cache_path(path: &Path, extension: &str) -> Result<PathBuf, String> {
@@ -732,6 +1025,7 @@ fn gui_state_path() -> Option<PathBuf> {
 
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             resolve_startup_folder,
             scan_folder,
@@ -740,18 +1034,14 @@ pub fn run() {
             apply_wallpaper,
             get_media_source,
             get_media_data_source,
+            get_thumbnail_source,
+            get_thumbnail_data_source,
             get_live_preview_source,
             get_live_preview_data_source,
             warm_live_preview,
             save_last_folder,
             close_picker,
         ])
-        .setup(|app| {
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.set_focus();
-            }
-            Ok(())
-        })
         .run(tauri::generate_context!())
         .expect("error while running jobowalls GUI");
 }
@@ -847,7 +1137,7 @@ mod tests {
         let second = video_poster_cache_path(&path).unwrap();
 
         assert_eq!(first, second);
-        assert!(first.to_string_lossy().ends_with(".poster-v2.jpg"));
+        assert!(first.to_string_lossy().ends_with(".poster-v3.jpg"));
     }
 
     #[test]

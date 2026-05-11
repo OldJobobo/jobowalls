@@ -2,7 +2,7 @@ use anyhow::{Context, Result, bail};
 use std::{
     ffi::OsString,
     fmt,
-    process::{Command, Stdio},
+    process::{Child, Command, Stdio},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,15 +56,19 @@ impl CommandSpec {
     }
 
     pub fn spawn_detached(&self) -> Result<u32> {
-        let child = Command::new(&self.program)
+        let child = self.spawn_detached_child()?;
+
+        Ok(child.id())
+    }
+
+    pub fn spawn_detached_child(&self) -> Result<Child> {
+        Command::new(&self.program)
             .args(&self.args)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
-            .with_context(|| format!("failed to spawn command `{self}`"))?;
-
-        Ok(child.id())
+            .with_context(|| format!("failed to spawn command `{self}`"))
     }
 }
 

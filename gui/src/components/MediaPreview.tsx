@@ -1,12 +1,14 @@
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { ImageIcon, Video } from "lucide-react";
 import {
   getLivePreviewDataSource,
   getLivePreviewSource,
   getMediaDataSource,
   getMediaSource,
+  getThumbnailDataSource,
+  getThumbnailSource,
 } from "../lib/invoke";
-import type { MediaSource, WallpaperItem } from "../lib/types";
+import type { MediaSource, PreviewQuality, WallpaperItem } from "../lib/types";
 
 type Props = {
   item: WallpaperItem;
@@ -14,13 +16,24 @@ type Props = {
   alt?: string;
   decorative?: boolean;
   playLive?: boolean;
+  mode?: "preview" | "thumbnail";
+  quality?: PreviewQuality;
 };
 
 const sourceCache = new Map<string, Promise<MediaSource>>();
 const fallbackCache = new Map<string, Promise<MediaSource>>();
 let assetPreviewFailed = window.localStorage.getItem("jobowalls:assetPreviewFailed") === "1";
+const PREVIEW_UPGRADE_DELAY_MS = 220;
 
-export default function MediaPreview({ item, className, alt, decorative, playLive }: Props) {
+function MediaPreview({
+  item,
+  className,
+  alt,
+  decorative,
+  playLive,
+  mode = "preview",
+  quality = "balanced",
+}: Props) {
   const [src, setSrc] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   const [fallbackTried, setFallbackTried] = useState(false);
@@ -32,15 +45,28 @@ export default function MediaPreview({ item, className, alt, decorative, playLiv
 
     async function load() {
       try {
-        if (item.kind === "live" && playLive) {
-          void cachedPreferredMediaSource(item.path).then((poster) => {
-            if (!cancelled) {
-              setSrc((current) => current ?? poster.src);
-              setFailed(!poster.src);
-            }
-          });
+        if (mode === "thumbnail") {
+          const result = await cachedPreferredThumbnailSource(item.path);
+          if (!cancelled) {
+            setSrc((current) => result.src ?? current);
+            setFailed(!result.src);
+          }
+          return;
+        }
 
-          const animated = await cachedPreferredLivePreviewSource(item.path);
+        const thumbnail = await cachedPreferredThumbnailSource(item.path);
+        if (!cancelled) {
+          setSrc((current) => current ?? thumbnail.src);
+          setFailed(!thumbnail.src);
+        }
+
+        await delay(PREVIEW_UPGRADE_DELAY_MS);
+        if (cancelled) {
+          return;
+        }
+
+        if (item.kind === "live" && playLive) {
+          const animated = await cachedPreferredLivePreviewSource(item.path, quality);
           if (!cancelled) {
             setSrc((current) => animated.src ?? current);
             setFailed(!animated.src);
@@ -64,7 +90,7 @@ export default function MediaPreview({ item, className, alt, decorative, playLiv
     return () => {
       cancelled = true;
     };
-  }, [item.kind, item.path, playLive]);
+  }, [item.kind, item.path, mode, playLive, quality]);
 
   async function loadFallback() {
     assetPreviewFailed = true;
@@ -77,8 +103,10 @@ export default function MediaPreview({ item, className, alt, decorative, playLiv
     setFallbackTried(true);
     try {
       const result =
-        item.kind === "live" && playLive
-          ? await cachedLivePreviewDataSource(item.path)
+        mode === "thumbnail"
+          ? await cachedThumbnailDataSource(item.path)
+          : item.kind === "live" && playLive
+          ? await cachedLivePreviewDataSource(item.path, quality)
           : await cachedMediaDataSource(item.path);
       setSrc(result.src);
       setFailed(!result.src);
@@ -88,6 +116,21 @@ export default function MediaPreview({ item, className, alt, decorative, playLiv
   }
 
   if (src) {
+    if (item.kind === "live" && playLive && mode === "preview" && isVideoSource(src)) {
+      return (
+        <video
+          className={className}
+          src={src}
+          aria-label={decorative ? undefined : alt ?? item.name}
+          autoPlay
+          loop
+          muted
+          playsInline
+          onError={() => void loadFallback()}
+        />
+      );
+    }
+
     return (
       <img
         className={className}
@@ -105,28 +148,44 @@ export default function MediaPreview({ item, className, alt, decorative, playLiv
   );
 }
 
+export default memo(MediaPreview);
+
 function cachedPreferredMediaSource(path: string) {
   return assetPreviewFailed ? cachedMediaDataSource(path) : cachedMediaSource(path);
 }
 
-function cachedPreferredLivePreviewSource(path: string) {
-  return assetPreviewFailed ? cachedLivePreviewDataSource(path) : cachedLivePreviewSource(path);
+function cachedPreferredThumbnailSource(path: string) {
+  return assetPreviewFailed ? cachedThumbnailDataSource(path) : cachedThumbnailSource(path);
+}
+
+function cachedPreferredLivePreviewSource(path: string, quality: PreviewQuality) {
+  return assetPreviewFailed
+    ? cachedLivePreviewDataSource(path, quality)
+    : cachedLivePreviewSource(path, quality);
 }
 
 function cachedMediaSource(path: string) {
   return cachedSource(`poster:${path}`, () => getMediaSource(path));
 }
 
-function cachedLivePreviewSource(path: string) {
-  return cachedSource(`live:${path}`, () => getLivePreviewSource(path));
+function cachedThumbnailSource(path: string) {
+  return cachedSource(`thumb:${path}`, () => getThumbnailSource(path));
+}
+
+function cachedLivePreviewSource(path: string, quality: PreviewQuality) {
+  return getLivePreviewSource(path, quality);
 }
 
 function cachedMediaDataSource(path: string) {
   return cachedFallback(`poster:${path}`, () => getMediaDataSource(path));
 }
 
-function cachedLivePreviewDataSource(path: string) {
-  return cachedFallback(`live:${path}`, () => getLivePreviewDataSource(path));
+function cachedThumbnailDataSource(path: string) {
+  return cachedFallback(`thumb:${path}`, () => getThumbnailDataSource(path));
+}
+
+function cachedLivePreviewDataSource(path: string, quality: PreviewQuality) {
+  return getLivePreviewDataSource(path, quality);
 }
 
 function cachedSource(key: string, load: () => Promise<MediaSource>) {
@@ -155,4 +214,12 @@ function cachedFallback(key: string, load: () => Promise<MediaSource>) {
   });
   fallbackCache.set(key, promise);
   return promise;
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function isVideoSource(src: string) {
+  return src.includes(".mp4") || src.startsWith("data:video/");
 }

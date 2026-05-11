@@ -40,6 +40,20 @@ pub fn build(
     animate_live: bool,
     force_top: bool,
 ) -> gtk::Box {
+    let (width, height) = image_dimensions(role);
+
+    build_with_image_dimensions(item, role, active, animate_live, force_top, width, height)
+}
+
+pub fn build_with_image_dimensions(
+    item: Option<&WallpaperItem>,
+    role: ThumbnailRole,
+    active: bool,
+    animate_live: bool,
+    force_top: bool,
+    width: i32,
+    height: i32,
+) -> gtk::Box {
     let root = gtk::Box::new(gtk::Orientation::Vertical, 4);
     root.add_css_class("thumb");
     match role {
@@ -56,8 +70,8 @@ pub fn build(
     if force_top {
         root.add_css_class("top-card");
     }
-    let (width, height) = image_dimensions(role);
-    let (allocation_width, allocation_height) = dimensions(role);
+    let allocation_width = width + (SHADOW_PAD_X * 2);
+    let allocation_height = height + SHADOW_PAD_TOP + SHADOW_PAD_BOTTOM;
     root.set_width_request(allocation_width);
     root.set_height_request(allocation_height);
 

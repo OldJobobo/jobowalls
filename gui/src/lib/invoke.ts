@@ -2,6 +2,7 @@ import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import type {
   JobowallsStatus,
   MediaSource,
+  PreviewQuality,
   SetPlanPreview,
   StartupFolder,
   WallpaperItem,
@@ -43,12 +44,20 @@ export function getMediaDataSource(path: string) {
   return invoke<MediaSource>("get_media_data_source", { path });
 }
 
-export function getLivePreviewSource(path: string) {
-  return invoke<MediaSource>("get_live_preview_source", { path }).then(withAssetUrl);
+export function getThumbnailSource(path: string) {
+  return invoke<MediaSource>("get_thumbnail_source", { path }).then(withAssetUrl);
 }
 
-export function getLivePreviewDataSource(path: string) {
-  return invoke<MediaSource>("get_live_preview_data_source", { path });
+export function getThumbnailDataSource(path: string) {
+  return invoke<MediaSource>("get_thumbnail_data_source", { path });
+}
+
+export function getLivePreviewSource(path: string, quality: PreviewQuality) {
+  return invoke<MediaSource>("get_live_preview_source", { path, quality }).then(withAssetUrl);
+}
+
+export function getLivePreviewDataSource(path: string, quality: PreviewQuality) {
+  return invoke<MediaSource>("get_live_preview_data_source", { path, quality });
 }
 
 export function warmLivePreview(path: string) {

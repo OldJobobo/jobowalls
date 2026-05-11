@@ -34,7 +34,8 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-const NAV_ANIMATION_FRAMES: u8 = 0;
+const NAV_ANIMATION_FRAMES: u8 = 10;
+const DESKTOP_PREVIEW_NAV_DELAY_MS: u64 = 140;
 const STATIC_DESKTOP_PREVIEW_DEBOUNCE_MS: u64 = 120;
 const LIVE_DESKTOP_PREVIEW_DEBOUNCE_MS: u64 = 220;
 const STATIC_PREVIEW_SETTLE_MS: u64 = 220;
@@ -622,7 +623,7 @@ fn terminate_preview_blocker(pid: u32) {
 }
 
 fn animation_progress(state: &AppState) -> f64 {
-    if state.animation_frame == 0 {
+    if state.animation_frame == 0 || NAV_ANIMATION_FRAMES == 0 {
         return 1.0;
     }
 
@@ -727,13 +728,13 @@ where
         gdk::Key::Left | gdk::Key::h | gdk::Key::H => {
             move_selection(&state, -1);
             render(&window_for_keys, state.clone());
-            schedule_desktop_preview_idle(state.clone());
+            schedule_desktop_preview_after_navigation(state.clone());
             glib::Propagation::Stop
         }
         gdk::Key::Right | gdk::Key::l | gdk::Key::L => {
             move_selection(&state, 1);
             render(&window_for_keys, state.clone());
-            schedule_desktop_preview_idle(state.clone());
+            schedule_desktop_preview_after_navigation(state.clone());
             glib::Propagation::Stop
         }
         gdk::Key::Return | gdk::Key::KP_Enter => {
@@ -748,7 +749,7 @@ where
         gdk::Key::s | gdk::Key::S => {
             shuffle_selection(&state);
             render(&window_for_keys, state.clone());
-            schedule_desktop_preview_idle(state.clone());
+            schedule_desktop_preview_after_navigation(state.clone());
             glib::Propagation::Stop
         }
         _ => glib::Propagation::Proceed,
@@ -778,7 +779,7 @@ fn install_pointer_controls_on<W>(
             move_selection(&state_for_scroll, 1);
         }
         render(&window_for_scroll, state_for_scroll.clone());
-        schedule_desktop_preview_idle(state_for_scroll.clone());
+        schedule_desktop_preview_after_navigation(state_for_scroll.clone());
         glib::Propagation::Stop
     });
     target.add_controller(scroll);
@@ -796,11 +797,11 @@ fn install_pointer_controls_on<W>(
         if x < width / 3.0 {
             move_selection(&state, -1);
             render(&window_for_click, state.clone());
-            schedule_desktop_preview_idle(state.clone());
+            schedule_desktop_preview_after_navigation(state.clone());
         } else if x > width * 2.0 / 3.0 {
             move_selection(&state, 1);
             render(&window_for_click, state.clone());
-            schedule_desktop_preview_idle(state.clone());
+            schedule_desktop_preview_after_navigation(state.clone());
         }
     });
     target.add_controller(click);
@@ -859,9 +860,9 @@ fn shuffle_selection(app_state: &Rc<RefCell<AppState>>) {
 }
 
 fn start_navigation_animation(state: &mut AppState, previous: usize, delta: isize) {
-    let _ = (previous, delta);
-    state.animation_frame = 0;
-    state.previous_selected = None;
+    state.animation_frame = NAV_ANIMATION_FRAMES;
+    state.animation_direction = delta.signum();
+    state.previous_selected = Some(previous);
 }
 
 fn apply_selected(state: &Rc<RefCell<AppState>>, window: &gtk::ApplicationWindow) {
@@ -933,10 +934,13 @@ fn schedule_desktop_preview(state: &Rc<RefCell<AppState>>) {
     let _ = state.borrow().desktop_request_tx.send(request);
 }
 
-fn schedule_desktop_preview_idle(state: Rc<RefCell<AppState>>) {
-    glib::idle_add_local_once(move || {
-        schedule_desktop_preview(&state);
-    });
+fn schedule_desktop_preview_after_navigation(state: Rc<RefCell<AppState>>) {
+    glib::timeout_add_local_once(
+        Duration::from_millis(DESKTOP_PREVIEW_NAV_DELAY_MS),
+        move || {
+            schedule_desktop_preview(&state);
+        },
+    );
 }
 
 fn restore_original_and_close(state: &Rc<RefCell<AppState>>, window: &gtk::ApplicationWindow) {

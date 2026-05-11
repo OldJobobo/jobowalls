@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Default permissions for the jobowalls picker window",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "dialog:allow-open"]
 }

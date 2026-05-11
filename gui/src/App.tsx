@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { open } from "@tauri-apps/plugin-dialog";
 import EmptyState from "./components/EmptyState";
 import FilmRoll from "./components/FilmRoll";
 import PickerControls from "./components/PickerControls";
@@ -11,12 +13,12 @@ import {
   resolveStartupFolder,
   saveLastFolder,
   scanFolder,
-  warmLivePreview,
 } from "./lib/invoke";
 import { shuffledIndex } from "./lib/media";
-import type { JobowallsStatus, SetPlanPreview, WallpaperItem } from "./lib/types";
+import type { JobowallsStatus, PreviewQuality, SetPlanPreview, WallpaperItem } from "./lib/types";
 
 const DEFAULT_MONITOR = "all";
+const PREVIEW_QUALITY_KEY = "jobowalls:previewQuality";
 
 export default function App() {
   const [folder, setFolder] = useState<string | null>(null);
@@ -25,9 +27,11 @@ export default function App() {
   const [status, setStatus] = useState<JobowallsStatus | null>(null);
   const [plan, setPlan] = useState<SetPlanPreview | null>(null);
   const [monitor] = useState(DEFAULT_MONITOR);
+  const [previewQuality, setPreviewQuality] = useState<PreviewQuality>(loadPreviewQuality);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [applyingPath, setApplyingPath] = useState<string | null>(null);
+  const lastWheelAt = useRef(0);
 
   const selected = items[selectedIndex] ?? null;
   const activePath = status?.wallpaper;
@@ -110,6 +114,10 @@ export default function App() {
         setPlan(null);
         return;
       }
+      await new Promise((resolve) => window.setTimeout(resolve, 160));
+      if (cancelled) {
+        return;
+      }
       try {
         const nextPlan = await previewPlan(selected.path, monitor);
         if (!cancelled) {
@@ -127,23 +135,6 @@ export default function App() {
       cancelled = true;
     };
   }, [selected, monitor]);
-
-  useEffect(() => {
-    if (items.length === 0) {
-      return;
-    }
-
-    const item = items[selectedIndex];
-    if (item?.kind !== "live") {
-      return;
-    }
-
-    const timeout = window.setTimeout(() => {
-      void warmLivePreview(item.path);
-    }, 220);
-
-    return () => window.clearTimeout(timeout);
-  }, [items, selectedIndex]);
 
   const selectRelative = useCallback(
     (step: number) => {
@@ -178,11 +169,17 @@ export default function App() {
   );
 
   const promptFolder = useCallback(async () => {
-    const path = window.prompt("Folder path", folder ?? "");
-    if (!path?.trim()) {
+    const selected = await open({
+      directory: true,
+      multiple: false,
+      defaultPath: folder ?? undefined,
+      title: "Choose wallpaper folder",
+    });
+    if (typeof selected !== "string" || !selected.trim()) {
       return;
     }
-    await loadFolder(path.trim());
+
+    await loadFolder(selected);
   }, [folder, loadFolder]);
 
   const rescan = useCallback(async () => {
@@ -194,6 +191,11 @@ export default function App() {
   const shuffle = useCallback(() => {
     setSelectedIndex((index) => shuffledIndex(items, index));
   }, [items]);
+
+  const changePreviewQuality = useCallback((quality: PreviewQuality) => {
+    setPreviewQuality(quality);
+    window.localStorage.setItem(PREVIEW_QUALITY_KEY, quality);
+  }, []);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -247,13 +249,20 @@ export default function App() {
           planBackend={plan?.backend}
           monitor={monitor}
           count={items.length}
+          previewQuality={previewQuality}
           onApply={() => void applySelected()}
           onShuffle={shuffle}
           onRescan={() => void rescan()}
           onFolderPrompt={() => void promptFolder()}
+          onPreviewQualityChange={changePreviewQuality}
           onClose={() => void closePicker()}
         />
-        <EmptyState message={emptyMessage} onFolderPrompt={() => void promptFolder()} />
+        <EmptyState
+          message={emptyMessage}
+          loading={loading}
+          showFolderButton={!loading}
+          onFolderPrompt={() => void promptFolder()}
+        />
       </div>
     );
   }
@@ -262,9 +271,16 @@ export default function App() {
     <div
       className="app-shell"
       onWheel={(event) => {
+        const now = window.performance.now();
+        if (now - lastWheelAt.current < 120) {
+          return;
+        }
+
         if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
+          lastWheelAt.current = now;
           selectRelative(event.deltaX > 0 ? 1 : -1);
         } else if (Math.abs(event.deltaY) > 20) {
+          lastWheelAt.current = now;
           selectRelative(event.deltaY > 0 ? 1 : -1);
         }
       }}
@@ -274,10 +290,12 @@ export default function App() {
         planBackend={plan?.backend}
         monitor={plan?.monitor ?? monitor}
         count={items.length}
+        previewQuality={previewQuality}
         onApply={() => void applySelected()}
         onShuffle={shuffle}
         onRescan={() => void rescan()}
         onFolderPrompt={() => void promptFolder()}
+        onPreviewQualityChange={changePreviewQuality}
         onClose={() => void closePicker()}
       />
 
@@ -285,6 +303,7 @@ export default function App() {
         item={selected}
         activePath={activePath}
         applying={applyingPath === selected?.path}
+        previewQuality={previewQuality}
       />
 
       <FilmRoll
@@ -297,10 +316,25 @@ export default function App() {
       />
 
       {error && <div className="error-strip">{error}</div>}
+      <button
+        type="button"
+        className="resize-grip"
+        aria-label="Resize window"
+        title="Resize"
+        onPointerDown={(event) => {
+          event.preventDefault();
+          void getCurrentWindow().startResizeDragging("SouthEast");
+        }}
+      />
     </div>
   );
 }
 
 function wrapIndex(index: number, length: number) {
   return ((index % length) + length) % length;
+}
+
+function loadPreviewQuality(): PreviewQuality {
+  const value = window.localStorage.getItem(PREVIEW_QUALITY_KEY);
+  return value === "fast" || value === "pretty" ? value : "balanced";
 }

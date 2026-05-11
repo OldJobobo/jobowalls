@@ -97,6 +97,11 @@ Responsibilities:
 - Track `jobowalls`-owned process IDs in state.
 - Stop only previously recorded `jobowalls`-owned `swaybg` processes for the
   target monitor set before starting a replacement.
+- As a configured ownership rule for Omarchy interoperability, `jobowalls` may
+  also stop an existing `swaybg` process whose command targets
+  `~/.config/omarchy/current/background` with `-i`. This rule must not match
+  arbitrary `swaybg` processes, missing-home paths, or commands that only
+  mention that path outside the image argument.
 
 Likely commands:
 
@@ -306,7 +311,7 @@ Core v1 completion:
 
 Per-monitor wallpaper support:
 
-- [ ] Make restore use per-monitor backend and wallpaper entries as
+- [x] Make restore use per-monitor backend and wallpaper entries as
   authoritative for mixed-monitor state instead of cloning top-level state
   values across every monitor.
 - [x] Add config parsing for `[monitors.profiles.<name>]` entries.
@@ -334,11 +339,11 @@ Live wallpaper pause support:
 
 Architecture and maintenance:
 
-- [ ] Verify a newly spawned `swaybg` process is still running before recording
+- [x] Verify a newly spawned `swaybg` process is still running before recording
   static wallpaper state as successfully applied.
-- [ ] Improve static backend availability errors so missing `swaybg`/`awww`
+- [x] Improve static backend availability errors so missing `swaybg`/`awww`
   reports a clear install or config action.
-- [ ] Document Omarchy current-background `swaybg` handling as an explicit
+- [x] Document Omarchy current-background `swaybg` handling as an explicit
   configured ownership rule, including tests that show the allowed process
   matching boundary.
 - [x] Extract monitor discovery into `src/monitors.rs`.

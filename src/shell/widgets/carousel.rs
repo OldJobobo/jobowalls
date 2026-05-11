@@ -7,15 +7,7 @@ use std::{collections::BTreeSet, path::Path};
 
 pub const STAGE_WIDTH: i32 = 860;
 const STAGE_HEIGHT: i32 = 204;
-const SLOT_CENTERS: [(isize, f64); 7] = [
-    (-3, 42.0),
-    (-2, 155.0),
-    (-1, 320.0),
-    (0, 430.0),
-    (1, 540.0),
-    (2, 705.0),
-    (3, 818.0),
-];
+const SLOT_IMAGE_OVERLAP: f64 = 18.0;
 
 pub fn build(
     items: &[WallpaperItem],
@@ -63,17 +55,20 @@ pub fn build(
 
     for (index, slot) in cards {
         let role = role_for_slot(slot);
-        let (width, _) = thumbnail::dimensions(role);
-        let card = thumbnail::build(
+        let (image_width, image_height) = image_dimensions_for_slot(slot);
+        let (width, height) = allocation_dimensions(image_width, image_height);
+        let card = thumbnail::build_with_image_dimensions(
             Some(&items[index]),
             role,
             is_active(items, Some(index), active_wallpaper),
             animate_live,
             index == selected,
+            image_width,
+            image_height,
         );
         card.set_opacity(opacity_for_slot(slot, index == selected));
         let x = slot_center(slot) - f64::from(width) / 2.0;
-        let y = centered_y_for_role(role);
+        let y = f64::from(STAGE_HEIGHT - height) / 2.0;
         root.put(&card, x, y);
     }
 
@@ -145,6 +140,43 @@ fn role_for_slot(slot: f64) -> ThumbnailRole {
     }
 }
 
+fn image_dimensions_for_slot(slot: f64) -> (i32, i32) {
+    const SIZE_STOPS: [(f64, ThumbnailRole); 4] = [
+        (0.0, ThumbnailRole::Selected),
+        (1.0, ThumbnailRole::Previous),
+        (2.0, ThumbnailRole::FarPrevious),
+        (3.0, ThumbnailRole::OuterPrevious),
+    ];
+
+    let distance = slot.abs().clamp(0.0, 3.0);
+    let lower = distance.floor() as usize;
+    let upper = distance.ceil() as usize;
+    let (_, lower_role) = SIZE_STOPS[lower];
+    let (_, upper_role) = SIZE_STOPS[upper];
+    let (lower_width, lower_height) = thumbnail::image_dimensions(lower_role);
+    let (upper_width, upper_height) = thumbnail::image_dimensions(upper_role);
+    let progress = distance - distance.floor();
+
+    (
+        lerp_i32(lower_width, upper_width, progress),
+        lerp_i32(lower_height, upper_height, progress),
+    )
+}
+
+fn allocation_dimensions(image_width: i32, image_height: i32) -> (i32, i32) {
+    let (selected_image_width, selected_image_height) =
+        thumbnail::image_dimensions(ThumbnailRole::Selected);
+    let (selected_width, selected_height) = thumbnail::dimensions(ThumbnailRole::Selected);
+    (
+        image_width + (selected_width - selected_image_width),
+        image_height + (selected_height - selected_image_height),
+    )
+}
+
+fn lerp_i32(start: i32, end: i32, progress: f64) -> i32 {
+    (f64::from(start) + (f64::from(end - start) * progress)).round() as i32
+}
+
 fn slot_center(slot: f64) -> f64 {
     let lower = slot.floor().clamp(-3.0, 3.0) as isize;
     let upper = slot.ceil().clamp(-3.0, 3.0) as isize;
@@ -158,10 +190,38 @@ fn slot_center(slot: f64) -> f64 {
 }
 
 fn center_for_slot(slot: isize) -> f64 {
-    SLOT_CENTERS
-        .iter()
-        .find_map(|(candidate, center)| (*candidate == slot).then_some(*center))
-        .unwrap_or(380.0)
+    let slot = slot.clamp(-3, 3);
+    let selected_center = f64::from(STAGE_WIDTH) / 2.0;
+    match slot {
+        -3 => selected_center - center_distance_between_slots(-3, 0),
+        -2 => selected_center - center_distance_between_slots(-2, 0),
+        -1 => selected_center - center_distance_between_slots(-1, 0),
+        0 => selected_center,
+        1 => selected_center + center_distance_between_slots(0, 1),
+        2 => selected_center + center_distance_between_slots(0, 2),
+        3 => selected_center + center_distance_between_slots(0, 3),
+        _ => selected_center,
+    }
+}
+
+fn center_distance_between_slots(start: isize, end: isize) -> f64 {
+    if start == end {
+        return 0.0;
+    }
+
+    let mut distance = 0.0;
+    for slot in start..end {
+        let left_width = image_width_for_resting_slot(slot);
+        let right_width = image_width_for_resting_slot(slot + 1);
+        distance += ((left_width + right_width) / 2.0) - SLOT_IMAGE_OVERLAP;
+    }
+    distance
+}
+
+fn image_width_for_resting_slot(slot: isize) -> f64 {
+    let role = role_for_slot(slot as f64);
+    let (width, _) = thumbnail::image_dimensions(role);
+    f64::from(width)
 }
 
 fn opacity_for_slot(slot: f64, is_selected: bool) -> f64 {
@@ -183,6 +243,7 @@ fn opacity_for_slot(slot: f64, is_selected: bool) -> f64 {
     }
 }
 
+#[cfg(test)]
 fn centered_y_for_role(role: ThumbnailRole) -> f64 {
     let (_, height) = thumbnail::dimensions(role);
     f64::from(STAGE_HEIGHT - height) / 2.0
@@ -242,7 +303,33 @@ mod tests {
     fn slot_center_interpolates_between_neighbor_centers() {
         let center = slot_center(-0.5);
 
-        assert_eq!(center, 375.0);
+        assert_eq!(center, 339.0);
+    }
+
+    #[test]
+    fn resting_slot_images_overlap_evenly() {
+        for slot in -3..3 {
+            let left_width = image_width_for_resting_slot(slot);
+            let right_width = image_width_for_resting_slot(slot + 1);
+            let left_right_edge = center_for_slot(slot) + left_width / 2.0;
+            let right_left_edge = center_for_slot(slot + 1) - right_width / 2.0;
+
+            assert_eq!(left_right_edge - right_left_edge, SLOT_IMAGE_OVERLAP);
+        }
+    }
+
+    #[test]
+    fn image_dimensions_interpolate_between_selected_and_neighbor() {
+        let dimensions = image_dimensions_for_slot(0.5);
+
+        assert_eq!(dimensions, (200, 113));
+    }
+
+    #[test]
+    fn allocation_dimensions_keep_selected_shadow_padding() {
+        let (width, height) = allocation_dimensions(200, 113);
+
+        assert_eq!((width, height), (284, 167));
     }
 
     #[test]

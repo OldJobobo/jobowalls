@@ -39,6 +39,7 @@ export default function FilmRoll({
           style={
             {
               "--offset": distance,
+              "--x": `${offsetForDistance(distance)}px`,
               zIndex: 10 - Math.abs(distance),
             } as React.CSSProperties
           }
@@ -47,7 +48,7 @@ export default function FilmRoll({
           title={item.name}
         >
           <span className="thumb-frame">
-            <MediaPreview item={item} decorative />
+            <MediaPreview item={item} decorative mode="thumbnail" />
           </span>
           <span className="thumb-meta">
             {item.kind === "live" ? <Video size={12} /> : <ImageIcon size={12} />}
@@ -82,4 +83,33 @@ function visibleItems(items: WallpaperItem[], selectedIndex: number) {
 
 function wrapIndex(index: number, length: number) {
   return ((index % length) + length) % length;
+}
+
+const THUMB_WIDTH = 232;
+const THUMB_OVERLAP = 16;
+
+function offsetForDistance(distance: number) {
+  const sign = Math.sign(distance);
+  const steps = Math.abs(distance);
+  let offset = 0;
+
+  for (let step = 0; step < steps; step += 1) {
+    const leftWidth = visualWidthForStep(step);
+    const rightWidth = visualWidthForStep(step + 1);
+    offset += (leftWidth + rightWidth) / 2 - THUMB_OVERLAP;
+  }
+
+  return Math.round(offset * sign);
+}
+
+function visualWidthForStep(step: number) {
+  return THUMB_WIDTH * scaleForStep(step);
+}
+
+function scaleForStep(step: number) {
+  if (step === 0) {
+    return 1;
+  }
+
+  return step === 1 ? 0.78 : 0.58;
 }

@@ -67,6 +67,20 @@ impl CliHarness {
             "swaybg",
             r#"#!/usr/bin/env bash
 printf 'swaybg %s\n' "$*" >>"${JOBOWALLS_TEST_LOG:?}"
+if [[ "$*" == "--help" ]]; then
+  exit 0
+fi
+sleep 2
+exit 0
+"#,
+        );
+    }
+
+    fn fake_swaybg_exits_immediately(&self) {
+        self.fake_program(
+            "swaybg",
+            r#"#!/usr/bin/env bash
+printf 'swaybg %s\n' "$*" >>"${JOBOWALLS_TEST_LOG:?}"
 exit 0
 "#,
         );
@@ -595,6 +609,58 @@ fn restore_live_dry_run_prints_mpvpaper_commands_without_starting_processes() {
 }
 
 #[test]
+fn restore_mixed_dry_run_uses_per_monitor_backend_and_wallpaper() {
+    let harness = CliHarness::new();
+    let static_wallpaper = harness.root.join("wall.png");
+    let live_wallpaper = harness.root.join("rain.mp4");
+    write_png(&static_wallpaper);
+    fs::write(&live_wallpaper, b"video").unwrap();
+    let static_canonical = fs::canonicalize(&static_wallpaper).unwrap();
+    let live_canonical = fs::canonicalize(&live_wallpaper).unwrap();
+    let state = serde_json::json!({
+        "version": 1,
+        "active_backend": "swaybg",
+        "mode": "static",
+        "wallpaper": "/tmp/top-level-should-not-be-used.png",
+        "monitors": {
+            "DP-1": {
+                "backend": "swaybg",
+                "wallpaper": static_canonical.display().to_string(),
+                "pid": 200
+            },
+            "HDMI-A-1": {
+                "backend": "mpvpaper",
+                "wallpaper": live_canonical.display().to_string(),
+                "pid": 12345
+            }
+        },
+        "collections": {},
+        "last_command": "set old",
+        "updated_at": "2026-05-08T00:00:00Z"
+    });
+    fs::write(
+        &harness.state,
+        serde_json::to_string_pretty(&state).unwrap(),
+    )
+    .unwrap();
+
+    let output = harness.run(&["restore", "--dry-run"]);
+    assert_success(&output);
+
+    let stdout = CliHarness::stdout(&output);
+    assert!(stdout.contains("planned backend: swaybg"));
+    assert!(stdout.contains("monitor: DP-1"));
+    assert!(stdout.contains(&format!("wallpaper: {}", static_canonical.display())));
+    assert!(stdout.contains("planned backend: mpvpaper"));
+    assert!(stdout.contains("monitor: HDMI-A-1"));
+    assert!(stdout.contains(&format!(
+        "mpvpaper --mpv-options 'loop no-audio panscan=1.0' HDMI-A-1 {}",
+        live_canonical.display()
+    )));
+    assert!(!harness.log.exists());
+}
+
+#[test]
 fn doctor_reports_paths_backends_monitors_and_stale_state() {
     let harness = CliHarness::new();
     harness.fake_doctor_commands();
@@ -745,4 +811,26 @@ fn static_swaybg_set_for_named_monitor_stops_only_that_live_pid() {
     assert!(state["monitors"]["DP-1"]["pid"].as_u64().is_some());
     assert_eq!(state["monitors"]["HDMI-A-1"]["backend"], "mpvpaper");
     assert_eq!(state["monitors"]["HDMI-A-1"]["pid"], 222);
+}
+
+#[test]
+fn static_swaybg_set_fails_when_spawned_process_exits_immediately() {
+    let harness = CliHarness::new();
+    harness.fake_swaybg_exits_immediately();
+    harness.fake_ps_without_omarchy_swaybg();
+    let wallpaper = harness.root.join("wall.png");
+    write_png(&wallpaper);
+
+    let output = harness.run(&[
+        "set",
+        wallpaper.to_str().unwrap(),
+        "--backend",
+        "swaybg",
+        "--monitor",
+        "DP-1",
+    ]);
+    assert_failure(&output);
+
+    assert!(CliHarness::stderr(&output).contains("swaybg exited immediately after start"));
+    assert!(!harness.state.exists());
 }

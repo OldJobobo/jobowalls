@@ -40,6 +40,26 @@
     0 0 24px rgba(216, 167, 79, 0.18);
 }
 
+.thumb.active .thumb-image {
+  box-shadow:
+    0 18px 42px rgba(0, 0, 0, 0.55),
+    0 2px 10px rgba(0, 0, 0, 0.45),
+    0 0 0 2px rgba(240, 195, 106, 0.72);
+}
+
+.thumb.active .thumb-placeholder {
+  box-shadow:
+    0 18px 42px rgba(0, 0, 0, 0.5),
+    0 0 0 2px rgba(240, 195, 106, 0.72);
+}
+
+.thumb.active .selected-image {
+  box-shadow:
+    0 24px 56px rgba(0, 0, 0, 0.62),
+    0 0 0 2px rgba(240, 195, 106, 0.82),
+    0 0 24px rgba(216, 167, 79, 0.24);
+}
+
 .selected {
   opacity: 1;
 }

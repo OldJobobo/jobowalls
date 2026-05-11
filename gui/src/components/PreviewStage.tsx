@@ -1,14 +1,15 @@
 import { ImageIcon, Video } from "lucide-react";
-import type { WallpaperItem } from "../lib/types";
+import type { PreviewQuality, WallpaperItem } from "../lib/types";
 import MediaPreview from "./MediaPreview";
 
 type Props = {
   item: WallpaperItem | null;
   activePath?: string;
   applying: boolean;
+  previewQuality: PreviewQuality;
 };
 
-export default function PreviewStage({ item, activePath, applying }: Props) {
+export default function PreviewStage({ item, activePath, applying, previewQuality }: Props) {
   if (!item) {
     return (
       <section className="preview-stage empty-preview">
@@ -22,10 +23,10 @@ export default function PreviewStage({ item, activePath, applying }: Props) {
   return (
     <section className="preview-stage">
       <div className="preview-backdrop" aria-hidden="true">
-        <MediaPreview item={item} decorative />
+        <MediaPreview item={item} decorative mode="thumbnail" />
       </div>
       <div className="preview-media">
-        <MediaPreview item={item} alt={item.name} playLive />
+        <MediaPreview item={item} alt={item.name} playLive quality={previewQuality} />
       </div>
       <div className="preview-caption">
         <span className="preview-name">{item.name}</span>
