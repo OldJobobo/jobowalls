@@ -24,6 +24,8 @@ pub struct Config {
     pub live: LiveConfig,
     pub mpvpaper: MpvpaperConfig,
     pub awww: AwwwConfig,
+    pub gui: GuiConfig,
+    pub shell: ShellConfig,
 }
 
 impl Config {
@@ -219,6 +221,69 @@ impl Default for AwwwConfig {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GuiConfig {
+    pub default_monitor: String,
+    pub preview_quality: PreviewQualityConfig,
+    pub remember_last_folder: bool,
+    pub use_omarchy_theme: bool,
+    pub window_width: u32,
+    pub window_height: u32,
+    pub live_preview: bool,
+}
+
+impl Default for GuiConfig {
+    fn default() -> Self {
+        Self {
+            default_monitor: "all".to_string(),
+            preview_quality: PreviewQualityConfig::Balanced,
+            remember_last_folder: true,
+            use_omarchy_theme: true,
+            window_width: 1040,
+            window_height: 620,
+            live_preview: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum PreviewQualityConfig {
+    Fast,
+    #[default]
+    Balanced,
+    Pretty,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ShellConfig {
+    pub monitor: String,
+    pub position: ShellPositionConfig,
+    pub height: i32,
+    pub live_preview: bool,
+}
+
+impl Default for ShellConfig {
+    fn default() -> Self {
+        Self {
+            monitor: "all".to_string(),
+            position: ShellPositionConfig::Bottom,
+            height: 340,
+            live_preview: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum ShellPositionConfig {
+    #[default]
+    Bottom,
+    Center,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -243,6 +308,17 @@ mod tests {
         assert_eq!(config.awww.transition_pos, "center");
         assert_eq!(config.awww.transition_bezier, ".42,0,.2,1");
         assert_eq!(config.awww.transition_wave, "28,12");
+        assert_eq!(config.gui.default_monitor, "all");
+        assert_eq!(config.gui.preview_quality, PreviewQualityConfig::Balanced);
+        assert!(config.gui.remember_last_folder);
+        assert!(config.gui.use_omarchy_theme);
+        assert_eq!(config.gui.window_width, 1040);
+        assert_eq!(config.gui.window_height, 620);
+        assert!(config.gui.live_preview);
+        assert_eq!(config.shell.monitor, "all");
+        assert_eq!(config.shell.position, ShellPositionConfig::Bottom);
+        assert_eq!(config.shell.height, 340);
+        assert!(config.shell.live_preview);
     }
 
     #[test]
@@ -261,6 +337,44 @@ mod tests {
         assert!(raw.contains("static_backend = \"auto\""));
         assert!(raw.contains("[live.pause]"));
         assert!(raw.contains("[mpvpaper]"));
+        assert!(raw.contains("[gui]"));
+        assert!(raw.contains("preview_quality = \"balanced\""));
+        assert!(raw.contains("[shell]"));
+        assert!(raw.contains("position = \"bottom\""));
+    }
+
+    #[test]
+    fn parses_gui_and_shell_config() {
+        let raw = r#"
+            [gui]
+            default_monitor = "DP-1"
+            preview_quality = "pretty"
+            remember_last_folder = false
+            use_omarchy_theme = false
+            window_width = 900
+            window_height = 540
+            live_preview = false
+
+            [shell]
+            monitor = "HDMI-A-1"
+            position = "center"
+            height = 420
+            live_preview = false
+        "#;
+
+        let config: Config = toml::from_str(raw).unwrap();
+
+        assert_eq!(config.gui.default_monitor, "DP-1");
+        assert_eq!(config.gui.preview_quality, PreviewQualityConfig::Pretty);
+        assert!(!config.gui.remember_last_folder);
+        assert!(!config.gui.use_omarchy_theme);
+        assert_eq!(config.gui.window_width, 900);
+        assert_eq!(config.gui.window_height, 540);
+        assert!(!config.gui.live_preview);
+        assert_eq!(config.shell.monitor, "HDMI-A-1");
+        assert_eq!(config.shell.position, ShellPositionConfig::Center);
+        assert_eq!(config.shell.height, 420);
+        assert!(!config.shell.live_preview);
     }
 
     #[test]

@@ -16,6 +16,8 @@ BUILD_FROM_SOURCE="${BUILD_FROM_SOURCE:-0}"
 PREFIX="${PREFIX:-"$HOME/.local"}"
 BINDIR="${BINDIR:-"$PREFIX/bin"}"
 APPDIR="${APPDIR:-"$PREFIX/share/applications"}"
+CONFIGDIR="${CONFIGDIR:-"$HOME/.config/jobowalls"}"
+INSTALL_CONFIG="${INSTALL_CONFIG:-1}"
 PROFILE="${PROFILE:-release}"
 TARGET="${TARGET:-x86_64-unknown-linux-gnu}"
 ARTIFACT_NAME="${ARTIFACT_NAME:-jobowalls-${TARGET}.tar.gz}"
@@ -32,6 +34,8 @@ Environment:
   PREFIX             Install prefix. Default: $HOME/.local
   BINDIR             Binary directory. Default: \$PREFIX/bin
   APPDIR             Desktop entry directory. Default: \$PREFIX/share/applications
+  CONFIGDIR          Config directory. Default: \$HOME/.config/jobowalls
+  INSTALL_CONFIG     Create default config when missing. Default: 1
   INSTALL_VERSION    Release tag to install, or latest. Default: latest
   BUILD_FROM_SOURCE  Build from source instead of downloading release binaries. Default: 0
   REPO_URL           Source clone URL for source builds.
@@ -43,6 +47,7 @@ Installs:
   \$BINDIR/jobowalls-gui
   \$BINDIR/jobowalls-shell
   \$APPDIR/dev.jobowalls.picker.desktop
+  \$CONFIGDIR/config.toml
 EOF
 }
 
@@ -88,10 +93,80 @@ install_or_permission_error() {
 }
 
 prepare_install_dirs() {
-  if ! install -d "$BINDIR" "$APPDIR"; then
-    explain_permission_failure "$BINDIR or $APPDIR"
+  if ! install -d "$BINDIR" "$APPDIR" "$CONFIGDIR"; then
+    explain_permission_failure "$BINDIR, $APPDIR, or $CONFIGDIR"
     return 2
   fi
+}
+
+install_default_config() {
+  if [[ "$INSTALL_CONFIG" == "0" ]]; then
+    return
+  fi
+
+  local config="$CONFIGDIR/config.toml"
+  if [[ -e "$config" ]]; then
+    echo "config exists, leaving unchanged: $config"
+    return
+  fi
+
+  if ! install -d "$CONFIGDIR"; then
+    explain_permission_failure "$CONFIGDIR"
+    return 2
+  fi
+
+  if ! cat >"$config" <<'EOF'
+[general]
+static_backend = "auto"
+live_backend = "mpvpaper"
+restore_on_startup = true
+
+[monitors]
+default = "all"
+
+[live.pause]
+on_battery = true
+on_fullscreen = true
+on_idle = true
+resume_on_ac = true
+resume_on_unfullscreen = true
+resume_on_activity = true
+
+[mpvpaper]
+mode = "per-monitor"
+extra_args = ["--loop", "--no-audio", "--panscan=1.0"]
+readiness_timeout_ms = 5000
+
+[awww]
+enabled = false
+transition_type = "grow"
+transition_duration = 2.4
+transition_fps = 60
+transition_pos = "center"
+transition_bezier = ".42,0,.2,1"
+transition_wave = "28,12"
+
+[gui]
+default_monitor = "all"
+preview_quality = "balanced"
+remember_last_folder = true
+use_omarchy_theme = true
+window_width = 1040
+window_height = 620
+live_preview = true
+
+[shell]
+monitor = "all"
+position = "bottom"
+height = 340
+live_preview = true
+EOF
+  then
+    explain_permission_failure "$config"
+    return 2
+  fi
+
+  chmod 0644 "$config"
 }
 
 path_contains_dir() {
@@ -396,6 +471,8 @@ ensure_checkout_for_source_build() {
     PREFIX="$PREFIX" \
     BINDIR="$BINDIR" \
     APPDIR="$APPDIR" \
+    CONFIGDIR="$CONFIGDIR" \
+    INSTALL_CONFIG="$INSTALL_CONFIG" \
     PROFILE="$PROFILE" \
     TARGET="$TARGET" \
     ARTIFACT_NAME="$ARTIFACT_NAME" \
@@ -461,6 +538,7 @@ fi
 
 install_optional_backends
 ensure_user_path
+install_default_config
 
 echo "installed:"
 echo "  $BINDIR/jobowalls"
@@ -469,3 +547,6 @@ if [[ -x "$BINDIR/jobowalls-shell" ]]; then
   echo "  $BINDIR/jobowalls-shell"
 fi
 echo "  $APPDIR/dev.jobowalls.picker.desktop"
+if [[ "$INSTALL_CONFIG" != "0" ]]; then
+  echo "  $CONFIGDIR/config.toml"
+fi

@@ -6,7 +6,7 @@ use crate::{
     orchestrator::SetPlan,
     shell::{
         apply::apply_wallpaper,
-        cli::ShellArgs,
+        cli::{ShellArgs, ShellPosition},
         layer,
         model::WallpaperItem,
         preview::{PreviewProfile, generate, prioritized_jobs},
@@ -43,12 +43,13 @@ const RETIRED_PREVIEW_CLEANUP_DELAY_MS: u64 = 450;
 
 pub fn run() -> Result<()> {
     let args = ShellArgs::parse();
+    let config = Config::load(&default_config_path())?;
+    let args = args.apply_config_defaults(&config);
     let shell_state_path = shell_state_path();
     let shell_state = ShellState::load(&shell_state_path)?;
     let folder = resolve_folder(args.folder.clone(), Some(&shell_state))?;
     let items = scan_folder(&folder)?;
     let selected = initial_selection(&items, &folder, &shell_state);
-    let config = Config::load(&default_config_path())?;
     let active_wallpaper =
         State::load(&runtime_state_path())?.map(|state| PathBuf::from(state.wallpaper));
     let (preview_tx, preview_rx) = mpsc::channel();
@@ -158,13 +159,13 @@ fn build_ui(
         .application(app)
         .title("JoboWalls Shell")
         .default_width(window_width)
-        .default_height(args.height)
+        .default_height(args.height())
         .focusable(true)
         .focus_on_click(true)
         .resizable(false)
         .build();
     if args.debug_window {
-        window.set_default_size(window_width, args.height);
+        window.set_default_size(window_width, args.height());
     }
     window.add_css_class("shell-window");
     layer::configure(&window, &args);
@@ -178,7 +179,7 @@ fn build_ui(
     }
     install_animation_tick(&window, state.clone());
     install_keys(&window, state.clone());
-    install_pointer_controls(&window, state.clone());
+    install_outside_cancel(&window, state.clone());
     install_close_cleanup(&window, state.clone());
     schedule_desktop_preview(&state);
     window.present();
@@ -192,8 +193,19 @@ fn render(window: &gtk::ApplicationWindow, state: Rc<RefCell<AppState>>) {
     let root = gtk::Box::new(gtk::Orientation::Vertical, 8);
     root.add_css_class("shell-root");
     root.set_halign(gtk::Align::Center);
-    root.set_valign(gtk::Align::Center);
+    root.set_valign(if state_ref.args.position() == ShellPosition::Center {
+        gtk::Align::Center
+    } else {
+        gtk::Align::End
+    });
+    root.set_margin_bottom(if state_ref.args.position() == ShellPosition::Center {
+        0
+    } else {
+        48
+    });
     root.set_focusable(true);
+    root.set_width_request(carousel::STAGE_WIDTH);
+    root.set_height_request(state_ref.args.height());
 
     if state_ref.items.is_empty() {
         root.append(&empty::build("No wallpapers found"));
@@ -355,6 +367,7 @@ fn apply_static_desktop_preview(
             }
             retire_live_preview(live_preview_pid);
             retire_static_preview(static_preview_pid);
+            retire_blocking_live_for_desktop_preview(&request.monitor);
             retire_blocking_swaybg_for_live_preview(&request.monitor);
             *static_preview_pid = Some(pid);
             Ok(())
@@ -395,6 +408,7 @@ fn apply_fast_live_preview(
             }
             stop_live_preview(live_preview_pid);
             retire_static_preview(static_preview_pid);
+            retire_blocking_live_for_desktop_preview(&request.monitor);
             retire_blocking_swaybg_for_live_preview(&request.monitor);
             *live_preview_pid = Some(pid);
             Ok(())
@@ -512,6 +526,23 @@ fn retire_blocking_swaybg_for_live_preview(monitor: &str) {
     }
 }
 
+fn retire_blocking_live_for_desktop_preview(monitor: &str) {
+    for pid in blocking_live_pids(&runtime_state_path(), monitor) {
+        retire_preview_blocker(pid);
+    }
+}
+
+fn blocking_live_pids(state_path: &Path, monitor: &str) -> Vec<u32> {
+    let Ok(Some(state)) = State::load(state_path) else {
+        return Vec::new();
+    };
+
+    let mut pids = state_live_pids_for_monitor(&state, monitor);
+    pids.sort_unstable();
+    pids.dedup();
+    pids
+}
+
 fn blocking_swaybg_pids(state_path: &Path, monitor: &str) -> Vec<u32> {
     let mut pids = Vec::new();
     if let Ok(Some(state)) = State::load(state_path) {
@@ -533,6 +564,21 @@ fn state_swaybg_pids_for_monitor(state: &State, monitor: &str) -> Vec<u32> {
                 return None;
             }
             (monitor_state.backend == Backend::Swaybg)
+                .then_some(monitor_state.pid)
+                .flatten()
+        })
+        .collect()
+}
+
+fn state_live_pids_for_monitor(state: &State, monitor: &str) -> Vec<u32> {
+    state
+        .monitors
+        .iter()
+        .filter_map(|(name, monitor_state)| {
+            if monitor != "all" && monitor != name {
+                return None;
+            }
+            (monitor_state.backend == Backend::Mpvpaper)
                 .then_some(monitor_state.pid)
                 .flatten()
         })
@@ -757,10 +803,6 @@ where
     target.add_controller(keys);
 }
 
-fn install_pointer_controls(window: &gtk::ApplicationWindow, state: Rc<RefCell<AppState>>) {
-    install_pointer_controls_on(window, window, state);
-}
-
 fn install_pointer_controls_on<W>(
     target: &W,
     window: &gtk::ApplicationWindow,
@@ -807,6 +849,50 @@ fn install_pointer_controls_on<W>(
     target.add_controller(click);
 }
 
+fn install_outside_cancel(window: &gtk::ApplicationWindow, state: Rc<RefCell<AppState>>) {
+    let click = gtk::GestureClick::new();
+    click.set_propagation_phase(gtk::PropagationPhase::Bubble);
+    let window_for_click = window.clone();
+    let args = state.borrow().args.clone();
+    click.connect_pressed(move |_, _, x, y| {
+        if args.debug_window {
+            return;
+        }
+
+        if !point_inside_shell_panel(
+            f64::from(window_for_click.width()),
+            f64::from(window_for_click.height()),
+            &args,
+            x,
+            y,
+        ) {
+            restore_original_and_close(&state, &window_for_click);
+        }
+    });
+    window.add_controller(click);
+}
+
+fn point_inside_shell_panel(
+    window_width: f64,
+    window_height: f64,
+    args: &ShellArgs,
+    x: f64,
+    y: f64,
+) -> bool {
+    let panel_width = f64::from(carousel::STAGE_WIDTH);
+    let panel_height = f64::from(args.height());
+    let left = ((window_width - panel_width) / 2.0).max(0.0);
+    let right = (left + panel_width).min(window_width.max(panel_width));
+    let top = if args.position() == ShellPosition::Center {
+        ((window_height - panel_height) / 2.0).max(0.0)
+    } else {
+        (window_height - panel_height - 48.0).max(0.0)
+    };
+    let bottom = (top + panel_height).min(window_height.max(panel_height));
+
+    x >= left && x <= right && y >= top && y <= bottom
+}
+
 fn install_close_cleanup(window: &gtk::ApplicationWindow, state: Rc<RefCell<AppState>>) {
     window.connect_close_request(move |_| {
         stop_desktop_preview_worker(&state);
@@ -828,7 +914,7 @@ fn move_selection(app_state: &Rc<RefCell<AppState>>, delta: isize) {
     };
     start_navigation_animation(&mut state, previous, delta);
     let folder = state.folder.clone();
-    let monitor = state.args.monitor.clone();
+    let monitor = state.args.monitor().to_string();
     let selected = state.selected;
     state.shell_state.remember(&folder, &monitor, selected);
     let _ = state.shell_state.save(&state.shell_state_path);
@@ -854,7 +940,7 @@ fn shuffle_selection(app_state: &Rc<RefCell<AppState>>) {
     start_navigation_animation(&mut state, previous, 1);
 
     let folder = state.folder.clone();
-    let monitor = state.args.monitor.clone();
+    let monitor = state.args.monitor().to_string();
     state.shell_state.remember(&folder, &monitor, selected);
     let _ = state.shell_state.save(&state.shell_state_path);
 }
@@ -871,7 +957,7 @@ fn apply_selected(state: &Rc<RefCell<AppState>>, window: &gtk::ApplicationWindow
         let Some(item) = state.items.get(state.selected) else {
             return;
         };
-        (item.path.clone(), state.args.monitor.clone())
+        (item.path.clone(), state.args.monitor().to_string())
     };
 
     stop_desktop_preview_worker(state);
@@ -923,7 +1009,7 @@ fn schedule_desktop_preview(state: &Rc<RefCell<AppState>>) {
         let generation = state.desktop_preview_generation;
         DesktopPreviewRequest::Preview(Box::new(DesktopPreviewJob {
             path,
-            monitor: state.args.monitor.clone(),
+            monitor: state.args.monitor().to_string(),
             generation,
             debounce_ms,
             is_live,
@@ -948,7 +1034,7 @@ fn restore_original_and_close(state: &Rc<RefCell<AppState>>, window: &gtk::Appli
         let state = state.borrow();
         let original = state.original_wallpaper.clone();
         let needs_restore = original.is_some() && state.current_preview_wallpaper != original;
-        (original, state.args.monitor.clone(), needs_restore)
+        (original, state.args.monitor().to_string(), needs_restore)
     };
 
     stop_desktop_preview_worker(state);
@@ -1104,6 +1190,103 @@ mod tests {
             Vec::<u32>::new()
         );
         assert_eq!(state_swaybg_pids_for_monitor(&state, "all"), vec![101]);
+    }
+
+    #[test]
+    fn state_live_pids_filter_by_monitor_and_backend() {
+        let state = State {
+            version: 1,
+            active_backend: Backend::Mpvpaper,
+            mode: MediaKind::Live,
+            wallpaper: "/tmp/a.mp4".to_string(),
+            monitors: BTreeMap::from([
+                (
+                    "DP-1".to_string(),
+                    MonitorState {
+                        backend: Backend::Mpvpaper,
+                        wallpaper: "/tmp/a.mp4".to_string(),
+                        pid: Some(101),
+                    },
+                ),
+                (
+                    "DP-2".to_string(),
+                    MonitorState {
+                        backend: Backend::Swaybg,
+                        wallpaper: "/tmp/b.png".to_string(),
+                        pid: Some(202),
+                    },
+                ),
+                (
+                    "HDMI-A-1".to_string(),
+                    MonitorState {
+                        backend: Backend::Mpvpaper,
+                        wallpaper: "/tmp/c.mp4".to_string(),
+                        pid: None,
+                    },
+                ),
+            ]),
+            collections: BTreeMap::new(),
+            last_command: None,
+            updated_at: time::OffsetDateTime::UNIX_EPOCH,
+        };
+
+        assert_eq!(state_live_pids_for_monitor(&state, "DP-1"), vec![101]);
+        assert_eq!(
+            state_live_pids_for_monitor(&state, "DP-2"),
+            Vec::<u32>::new()
+        );
+        assert_eq!(state_live_pids_for_monitor(&state, "all"), vec![101]);
+    }
+
+    #[test]
+    fn outside_click_geometry_tracks_bottom_and_center_panel() {
+        let bottom_args = ShellArgs {
+            folder: None,
+            monitor: None,
+            position: Some(ShellPosition::Bottom),
+            width: 0,
+            height: Some(340),
+            no_live_preview: false,
+            debug_window: false,
+        };
+        assert!(point_inside_shell_panel(
+            1920.0,
+            1080.0,
+            &bottom_args,
+            960.0,
+            860.0
+        ));
+        assert!(!point_inside_shell_panel(
+            1920.0,
+            1080.0,
+            &bottom_args,
+            960.0,
+            500.0
+        ));
+
+        let center_args = ShellArgs {
+            folder: None,
+            monitor: None,
+            position: Some(ShellPosition::Center),
+            width: 0,
+            height: Some(340),
+            no_live_preview: false,
+            debug_window: false,
+        };
+        assert!(point_inside_shell_panel(
+            1920.0,
+            1080.0,
+            &center_args,
+            960.0,
+            540.0
+        ));
+        assert!(!point_inside_shell_panel(
+            1920.0,
+            1080.0,
+            &center_args,
+            960.0,
+            900.0
+        ));
     }
 
     #[test]

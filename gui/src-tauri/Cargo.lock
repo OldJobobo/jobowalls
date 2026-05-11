@@ -1578,7 +1578,7 @@ dependencies = [
 
 [[package]]
 name = "jobowalls-gui"
-version = "0.1.13"
+version = "0.1.14"
 dependencies = [
  "base64 0.22.1",
  "dirs",
@@ -1588,6 +1588,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-dialog",
  "tempfile",
+ "toml 0.9.12+spec-1.1.0",
 ]
 
 [[package]]

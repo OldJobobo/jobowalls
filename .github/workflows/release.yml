@@ -70,6 +70,9 @@ jobs:
       - name: Install GUI dependencies
         run: npm --prefix gui ci
 
+      - name: Check version metadata
+        run: bash scripts/check-version.sh
+
       - name: Test
         run: |
           cargo test --locked
@@ -89,6 +92,7 @@ jobs:
           file target/release-build/release/jobowalls-shell | grep -q 'ELF'
           file gui/src-tauri/target/release/jobowalls-gui | grep -q 'ELF'
           mkdir -p dist/jobowalls-x86_64-unknown-linux-gnu/bin
+          mkdir -p dist/jobowalls-x86_64-unknown-linux-gnu/share/doc/jobowalls
           mkdir -p dist/jobowalls-x86_64-unknown-linux-gnu/share/applications
           install -m 0755 target/release-build/release/jobowalls \
             dist/jobowalls-x86_64-unknown-linux-gnu/bin/jobowalls
@@ -100,6 +104,8 @@ jobs:
             dist/jobowalls-x86_64-unknown-linux-gnu/bin/jobowalls-gui
           install -m 0644 packaging/linux/dev.jobowalls.picker.desktop \
             dist/jobowalls-x86_64-unknown-linux-gnu/share/applications/dev.jobowalls.picker.desktop
+          install -m 0644 VERSION CHANGELOG.md RELEASE_NOTES.md \
+            dist/jobowalls-x86_64-unknown-linux-gnu/share/doc/jobowalls/
           tar -C dist/jobowalls-x86_64-unknown-linux-gnu \
             -czf dist/jobowalls-x86_64-unknown-linux-gnu.tar.gz .
 
@@ -114,3 +120,4 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           files: dist/jobowalls-x86_64-unknown-linux-gnu.tar.gz
+          body_path: RELEASE_NOTES.md

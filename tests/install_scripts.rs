@@ -62,6 +62,10 @@ impl ScriptHarness {
         command.output().unwrap()
     }
 
+    fn config_path(&self) -> PathBuf {
+        self.root.join("home/.config/jobowalls/config.toml")
+    }
+
     fn fake_program(&self, name: &str, body: &str) {
         let path = self.fakebin.join(name);
         fs::write(&path, body).unwrap();
@@ -239,6 +243,11 @@ fn install_from_release_copies_binaries_and_rewrites_desktop_exec() {
     assert!(harness.bindir.join("jobowalls-gui-bin").exists());
     let desktop = fs::read_to_string(harness.appdir.join("dev.jobowalls.picker.desktop")).unwrap();
     assert!(desktop.contains(&format!("Exec={}/jobowalls-gui", harness.bindir.display())));
+    let config = fs::read_to_string(harness.config_path()).unwrap();
+    assert!(config.contains("[gui]"));
+    assert!(config.contains("preview_quality = \"balanced\""));
+    assert!(config.contains("[shell]"));
+    assert!(config.contains("position = \"bottom\""));
 }
 
 #[test]
@@ -271,6 +280,31 @@ fn install_falls_back_to_source_build_when_release_download_fails() {
     assert!(harness.bindir.join("jobowalls-shell").exists());
     assert!(harness.bindir.join("jobowalls-gui-bin").exists());
     assert!(harness.bindir.join("jobowalls-gui").exists());
+    assert!(harness.config_path().exists());
+}
+
+#[test]
+fn install_keeps_existing_config_file() {
+    let harness = ScriptHarness::new();
+    let archive = fixture_release_archive(&harness.root, false);
+    harness.fake_curl_release_download(&archive);
+    harness.fake_mpvpaper_available();
+    let config = harness.config_path();
+    fs::create_dir_all(config.parent().unwrap()).unwrap();
+    fs::write(
+        &config,
+        "# user config\n[gui]\npreview_quality = \"pretty\"\n",
+    )
+    .unwrap();
+
+    let output = harness.run_script("install.sh", &[]);
+
+    assert_success(&output);
+    assert_eq!(
+        fs::read_to_string(config).unwrap(),
+        "# user config\n[gui]\npreview_quality = \"pretty\"\n"
+    );
+    assert!(stdout(&output).contains("config exists, leaving unchanged"));
 }
 
 #[test]

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
     process::{Child, Command},
@@ -89,6 +89,59 @@ struct MediaSource {
     reason: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OmarchyThemeColors {
+    background: String,
+    foreground: String,
+    accent: String,
+    selection_background: String,
+    selection_foreground: String,
+    muted: String,
+    surface: String,
+    surface_raised: String,
+    warning: String,
+    error: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct GuiConfig {
+    #[serde(rename = "defaultMonitor", alias = "default_monitor")]
+    default_monitor: String,
+    #[serde(rename = "previewQuality", alias = "preview_quality")]
+    preview_quality: PreviewQuality,
+    #[serde(rename = "rememberLastFolder", alias = "remember_last_folder")]
+    remember_last_folder: bool,
+    #[serde(rename = "useOmarchyTheme", alias = "use_omarchy_theme")]
+    use_omarchy_theme: bool,
+    #[serde(rename = "windowWidth", alias = "window_width")]
+    window_width: u32,
+    #[serde(rename = "windowHeight", alias = "window_height")]
+    window_height: u32,
+    #[serde(rename = "livePreview", alias = "live_preview")]
+    live_preview: bool,
+}
+
+impl Default for GuiConfig {
+    fn default() -> Self {
+        Self {
+            default_monitor: "all".to_string(),
+            preview_quality: PreviewQuality::Balanced,
+            remember_last_folder: true,
+            use_omarchy_theme: true,
+            window_width: 1040,
+            window_height: 620,
+            live_preview: true,
+        }
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct AppConfig {
+    gui: GuiConfig,
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GuiState {
@@ -138,6 +191,7 @@ impl GuiState {
 
 #[tauri::command]
 fn resolve_startup_folder(input_path: Option<String>) -> Result<StartupFolder, String> {
+    let config = load_gui_config();
     if let Some(path) = input_path
         .or_else(first_path_arg)
         .and_then(|path| existing_dir(PathBuf::from(path)))
@@ -148,16 +202,18 @@ fn resolve_startup_folder(input_path: Option<String>) -> Result<StartupFolder, S
         });
     }
 
-    let state = GuiState::load();
-    if let Some(path) = state
-        .last_folder
-        .as_ref()
-        .and_then(|path| existing_dir(PathBuf::from(path)))
-    {
-        return Ok(StartupFolder {
-            path: Some(path.display().to_string()),
-            source: "last-folder".to_string(),
-        });
+    if config.remember_last_folder {
+        let state = GuiState::load();
+        if let Some(path) = state
+            .last_folder
+            .as_ref()
+            .and_then(|path| existing_dir(PathBuf::from(path)))
+        {
+            return Ok(StartupFolder {
+                path: Some(path.display().to_string()),
+                source: "last-folder".to_string(),
+            });
+        }
     }
 
     if let Some(path) = dirs::home_dir()
@@ -228,6 +284,22 @@ fn scan_folder(path: String) -> Result<Vec<WallpaperItem>, String> {
 
     items.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     Ok(items)
+}
+
+#[tauri::command]
+fn get_omarchy_theme_colors() -> Result<Option<OmarchyThemeColors>, String> {
+    let Some(path) = omarchy_theme_colors_path() else {
+        return Ok(None);
+    };
+    let Ok(raw) = fs::read_to_string(&path) else {
+        return Ok(None);
+    };
+    parse_omarchy_theme_colors(&raw).map(Some)
+}
+
+#[tauri::command]
+fn get_gui_config() -> Result<GuiConfig, String> {
+    Ok(load_gui_config())
 }
 
 #[tauri::command]
@@ -366,7 +438,10 @@ fn get_live_preview_source(path: String, quality: PreviewQuality) -> Result<Medi
 }
 
 #[tauri::command]
-fn get_live_preview_data_source(path: String, quality: PreviewQuality) -> Result<MediaSource, String> {
+fn get_live_preview_data_source(
+    path: String,
+    quality: PreviewQuality,
+) -> Result<MediaSource, String> {
     let path_buf = PathBuf::from(&path);
     if !matches!(classify_path(&path_buf), Some(MediaKind::Live)) {
         return get_media_data_source(path);
@@ -722,7 +797,10 @@ fn generate_video_animation(path: &Path, quality: PreviewQuality) -> Result<Path
     })
 }
 
-fn cached_video_animation_path(path: &Path, quality: PreviewQuality) -> Result<Option<PathBuf>, String> {
+fn cached_video_animation_path(
+    path: &Path,
+    quality: PreviewQuality,
+) -> Result<Option<PathBuf>, String> {
     let cache_path = video_animation_cache_path(path, quality)?;
     Ok(cache_path.exists().then_some(cache_path))
 }
@@ -1023,12 +1101,102 @@ fn gui_state_path() -> Option<PathBuf> {
     })
 }
 
+fn omarchy_theme_colors_path() -> Option<PathBuf> {
+    if let Some(config_home) = std::env::var_os("XDG_CONFIG_HOME") {
+        return Some(
+            PathBuf::from(config_home)
+                .join("omarchy")
+                .join("current")
+                .join("theme")
+                .join("colors.toml"),
+        );
+    }
+
+    dirs::home_dir().map(|home| {
+        home.join(".config")
+            .join("omarchy")
+            .join("current")
+            .join("theme")
+            .join("colors.toml")
+    })
+}
+
+fn default_config_path() -> Option<PathBuf> {
+    if let Some(config_home) = std::env::var_os("XDG_CONFIG_HOME") {
+        return Some(PathBuf::from(config_home).join("jobowalls").join("config.toml"));
+    }
+
+    dirs::home_dir().map(|home| home.join(".config").join("jobowalls").join("config.toml"))
+}
+
+fn load_gui_config() -> GuiConfig {
+    let Some(path) = default_config_path() else {
+        return GuiConfig::default();
+    };
+    let Ok(raw) = fs::read_to_string(path) else {
+        return GuiConfig::default();
+    };
+    toml::from_str::<AppConfig>(&raw)
+        .map(|config| config.gui.normalized())
+        .unwrap_or_default()
+}
+
+impl GuiConfig {
+    fn normalized(mut self) -> Self {
+        if self.default_monitor.trim().is_empty() {
+            self.default_monitor = "all".to_string();
+        }
+        if self.window_width == 0 {
+            self.window_width = 1040;
+        }
+        if self.window_height == 0 {
+            self.window_height = 620;
+        }
+        self
+    }
+}
+
+fn parse_omarchy_theme_colors(raw: &str) -> Result<OmarchyThemeColors, String> {
+    let colors = toml::from_str::<HashMap<String, String>>(raw)
+        .map_err(|error| format!("failed to parse Omarchy theme colors: {error}"))?;
+
+    let color = |key: &str, fallback: &str| {
+        colors
+            .get(key)
+            .filter(|value| is_hex_color(value))
+            .cloned()
+            .unwrap_or_else(|| fallback.to_string())
+    };
+
+    Ok(OmarchyThemeColors {
+        background: color("background", "#0c0d0f"),
+        foreground: color("foreground", "#eef0f2"),
+        accent: color("accent", "#7cc7b2"),
+        selection_background: color("selection_background", "#7cc7b2"),
+        selection_foreground: color("selection_foreground", "#0c0d0f"),
+        muted: color("color8", "#8f98a2"),
+        surface: color("color0", "#171a1e"),
+        surface_raised: color("color8", "#2a3038"),
+        warning: color("color3", "#e0a85c"),
+        error: color("color1", "#d36a72"),
+    })
+}
+
+fn is_hex_color(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    matches!(bytes.len(), 7 | 9)
+        && bytes[0] == b'#'
+        && bytes[1..].iter().all(|byte| byte.is_ascii_hexdigit())
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             resolve_startup_folder,
             scan_folder,
+            get_omarchy_theme_colors,
+            get_gui_config,
             get_status,
             preview_plan,
             apply_wallpaper,
@@ -1112,6 +1280,58 @@ mod tests {
         assert_eq!(mime_for_path(Path::new("wall.gif")), "image/gif");
         assert_eq!(mime_for_path(Path::new("wall.bmp")), "image/bmp");
         assert_eq!(mime_for_path(Path::new("wall.png")), "image/png");
+    }
+
+    #[test]
+    fn parses_omarchy_theme_colors_with_fallbacks() {
+        let colors = parse_omarchy_theme_colors(
+            r##"
+background = "#181a1f"
+foreground = "#b9bec6"
+accent = "#ad2222"
+selection_background = "#9e1a1a"
+selection_foreground = "#181a1f"
+color8 = "#4b515b"
+color3 = "not-a-color"
+color1 = "#b31414"
+"##,
+        )
+        .unwrap();
+
+        assert_eq!(colors.background, "#181a1f");
+        assert_eq!(colors.foreground, "#b9bec6");
+        assert_eq!(colors.accent, "#ad2222");
+        assert_eq!(colors.selection_background, "#9e1a1a");
+        assert_eq!(colors.selection_foreground, "#181a1f");
+        assert_eq!(colors.muted, "#4b515b");
+        assert_eq!(colors.warning, "#e0a85c");
+        assert_eq!(colors.error, "#b31414");
+    }
+
+    #[test]
+    fn parses_gui_config_section() {
+        let config: AppConfig = toml::from_str(
+            r#"
+            [gui]
+            default_monitor = "DP-1"
+            preview_quality = "pretty"
+            remember_last_folder = false
+            use_omarchy_theme = false
+            window_width = 900
+            window_height = 540
+            live_preview = false
+            "#,
+        )
+        .unwrap();
+
+        let gui = config.gui.normalized();
+        assert_eq!(gui.default_monitor, "DP-1");
+        assert_eq!(gui.preview_quality, PreviewQuality::Pretty);
+        assert!(!gui.remember_last_folder);
+        assert!(!gui.use_omarchy_theme);
+        assert_eq!(gui.window_width, 900);
+        assert_eq!(gui.window_height, 540);
+        assert!(!gui.live_preview);
     }
 
     #[test]

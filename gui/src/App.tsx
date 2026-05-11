@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
 import EmptyState from "./components/EmptyState";
 import FilmRoll from "./components/FilmRoll";
@@ -8,6 +8,8 @@ import PreviewStage from "./components/PreviewStage";
 import {
   applyWallpaper,
   closePicker,
+  getGuiConfig,
+  getOmarchyThemeColors,
   getStatus,
   previewPlan,
   resolveStartupFolder,
@@ -15,10 +17,26 @@ import {
   scanFolder,
 } from "./lib/invoke";
 import { shuffledIndex } from "./lib/media";
-import type { JobowallsStatus, PreviewQuality, SetPlanPreview, WallpaperItem } from "./lib/types";
+import type {
+  GuiConfig,
+  JobowallsStatus,
+  OmarchyThemeColors,
+  PreviewQuality,
+  SetPlanPreview,
+  WallpaperItem,
+} from "./lib/types";
 
 const DEFAULT_MONITOR = "all";
 const PREVIEW_QUALITY_KEY = "jobowalls:previewQuality";
+const DEFAULT_GUI_CONFIG: GuiConfig = {
+  defaultMonitor: DEFAULT_MONITOR,
+  previewQuality: "balanced",
+  rememberLastFolder: true,
+  useOmarchyTheme: true,
+  windowWidth: 1040,
+  windowHeight: 620,
+  livePreview: true,
+};
 
 export default function App() {
   const [folder, setFolder] = useState<string | null>(null);
@@ -26,12 +44,14 @@ export default function App() {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [status, setStatus] = useState<JobowallsStatus | null>(null);
   const [plan, setPlan] = useState<SetPlanPreview | null>(null);
-  const [monitor] = useState(DEFAULT_MONITOR);
-  const [previewQuality, setPreviewQuality] = useState<PreviewQuality>(loadPreviewQuality);
+  const [monitor, setMonitor] = useState(DEFAULT_MONITOR);
+  const [previewQuality, setPreviewQuality] = useState<PreviewQuality>(DEFAULT_GUI_CONFIG.previewQuality);
+  const [livePreview, setLivePreview] = useState(DEFAULT_GUI_CONFIG.livePreview);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [applyingPath, setApplyingPath] = useState<string | null>(null);
   const lastWheelAt = useRef(0);
+  const rememberLastFolder = useRef(DEFAULT_GUI_CONFIG.rememberLastFolder);
 
   const selected = items[selectedIndex] ?? null;
   const activePath = status?.wallpaper;
@@ -64,7 +84,9 @@ export default function App() {
           }
           return Math.min(previous, scanned.length - 1);
         });
-        await saveLastFolder(path);
+        if (rememberLastFolder.current) {
+          await saveLastFolder(path);
+        }
       } catch (err) {
         setError(String(err));
         setItems([]);
@@ -80,8 +102,28 @@ export default function App() {
 
     async function boot() {
       setLoading(true);
-      await loadStatus();
       try {
+        const config = normalizeGuiConfig(await getGuiConfig());
+        if (!mounted) {
+          return;
+        }
+        rememberLastFolder.current = config.rememberLastFolder;
+        setMonitor(config.defaultMonitor);
+        setPreviewQuality(loadPreviewQuality(config.previewQuality));
+        setLivePreview(config.livePreview);
+        void getCurrentWindow().setSize(new LogicalSize(config.windowWidth, config.windowHeight));
+        if (config.useOmarchyTheme) {
+          try {
+            const colors = await getOmarchyThemeColors();
+            if (mounted && colors) {
+              applyThemeColors(colors);
+            }
+          } catch {
+            // Keep the built-in palette when Omarchy theme colors are unavailable.
+          }
+        }
+
+        await loadStatus();
         const startup = await resolveStartupFolder();
         if (!mounted) {
           return;
@@ -304,6 +346,7 @@ export default function App() {
         activePath={activePath}
         applying={applyingPath === selected?.path}
         previewQuality={previewQuality}
+        livePreview={livePreview}
       />
 
       <FilmRoll
@@ -334,7 +377,31 @@ function wrapIndex(index: number, length: number) {
   return ((index % length) + length) % length;
 }
 
-function loadPreviewQuality(): PreviewQuality {
+function loadPreviewQuality(fallback: PreviewQuality): PreviewQuality {
   const value = window.localStorage.getItem(PREVIEW_QUALITY_KEY);
-  return value === "fast" || value === "pretty" ? value : "balanced";
+  return value === "fast" || value === "balanced" || value === "pretty" ? value : fallback;
+}
+
+function normalizeGuiConfig(config: GuiConfig): GuiConfig {
+  return {
+    ...DEFAULT_GUI_CONFIG,
+    ...config,
+    defaultMonitor: config.defaultMonitor.trim() || DEFAULT_MONITOR,
+    windowWidth: config.windowWidth > 0 ? config.windowWidth : DEFAULT_GUI_CONFIG.windowWidth,
+    windowHeight: config.windowHeight > 0 ? config.windowHeight : DEFAULT_GUI_CONFIG.windowHeight,
+  };
+}
+
+function applyThemeColors(colors: OmarchyThemeColors) {
+  const root = document.documentElement;
+  root.style.setProperty("--jw-background", colors.background);
+  root.style.setProperty("--jw-foreground", colors.foreground);
+  root.style.setProperty("--jw-accent", colors.accent);
+  root.style.setProperty("--jw-selection-background", colors.selectionBackground);
+  root.style.setProperty("--jw-selection-foreground", colors.selectionForeground);
+  root.style.setProperty("--jw-muted", colors.muted);
+  root.style.setProperty("--jw-surface", colors.surface);
+  root.style.setProperty("--jw-surface-raised", colors.surfaceRaised);
+  root.style.setProperty("--jw-warning", colors.warning);
+  root.style.setProperty("--jw-error", colors.error);
 }

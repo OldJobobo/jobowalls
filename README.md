@@ -72,6 +72,8 @@ curl -fsSL https://raw.githubusercontent.com/OldJobobo/jobowalls/refs/heads/mast
 
 The installer downloads the latest precompiled Linux x86_64 release by default.
 If no release binary is available, it falls back to building from source.
+It also creates `~/.config/jobowalls/config.toml` with default settings when the
+file does not already exist.
 
 Or clone and run the installer from a checkout:
 
@@ -88,6 +90,7 @@ This installs:
 ~/.local/bin/jobowalls-shell
 ~/.local/bin/jobowalls-gui
 ~/.local/share/applications/dev.jobowalls.picker.desktop
+~/.config/jobowalls/config.toml
 ```
 
 When installing to the default prefix, the installer adds `~/.local/bin` to
@@ -233,6 +236,30 @@ Create a config file:
 jobowalls config init
 ```
 
+The installer creates `~/.config/jobowalls/config.toml` by default. Existing
+config files are left untouched. Command-line flags override config values, and
+config values override built-in defaults. Runtime state is kept separately under
+`~/.local/state/jobowalls/`.
+
+GUI and shell settings are part of the same config:
+
+```toml
+[gui]
+default_monitor = "all"
+preview_quality = "balanced"
+remember_last_folder = true
+use_omarchy_theme = true
+window_width = 1040
+window_height = 620
+live_preview = true
+
+[shell]
+monitor = "all"
+position = "bottom"
+height = 340
+live_preview = true
+```
+
 ## GUI Picker
 
 Launch the picker:
@@ -250,9 +277,13 @@ jobowalls-gui ~/Pictures/wallpapers
 The picker resolves its startup folder in this order:
 
 1. Folder argument passed to `jobowalls-gui`.
-2. Last folder saved by the GUI.
+2. Last folder saved by the GUI, when `[gui].remember_last_folder` is enabled.
 3. `~/.config/omarchy/current/theme/backgrounds`.
 4. `~/Pictures/Wallpapers`.
+
+The GUI uses `[gui].default_monitor`, `[gui].preview_quality`,
+`[gui].use_omarchy_theme`, `[gui].window_width`, `[gui].window_height`, and
+`[gui].live_preview` as startup defaults.
 
 Keyboard controls:
 
@@ -290,6 +321,11 @@ jobowalls-shell --monitor all ~/Pictures/wallpapers
 jobowalls-shell --no-live-preview ~/Pictures/wallpapers
 jobowalls-shell --debug-window ~/Pictures/wallpapers
 ```
+
+The shell uses `[shell].monitor`, `[shell].position`, `[shell].height`, and
+`[shell].live_preview` as defaults. Flags such as `--monitor`,
+`--position`, `--height`, and `--no-live-preview` override config values for
+that launch.
 
 Keyboard controls:
 
@@ -362,58 +398,8 @@ GUI preview cache:
 
 ## Development
 
-Run CLI tests:
-
-```bash
-cargo test
-```
-
-Run the CLI from source:
-
-```bash
-cargo run -- set /path/to/wallpaper.png --dry-run
-```
-
-Run the GUI in development:
-
-```bash
-cd gui
-npm install
-npm run tauri:dev
-```
-
-Run the shell picker in a normal debug window:
-
-```bash
-cargo run --bin jobowalls-shell -- --debug-window ~/Pictures/wallpapers
-```
-
-Build the GUI frontend:
-
-```bash
-cd gui
-npm run build
-```
-
-Check the Tauri backend:
-
-```bash
-cd gui/src-tauri
-cargo check
-```
-
-## Packaging
-
-The repository includes packaging starters:
-
-```text
-packaging/linux/dev.jobowalls.picker.desktop
-packaging/arch/PKGBUILD
-packaging/arch/README.md
-```
-
-The Arch packaging files are a starting point for a future AUR package. They
-are not a submitted AUR package yet.
+Development, validation, and packaging notes live in
+[DEVELOPMENT.md](DEVELOPMENT.md).
 
 ## Notes
 

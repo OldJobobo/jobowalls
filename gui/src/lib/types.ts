@@ -40,3 +40,26 @@ export type MediaSource = {
   src: string | null;
   reason: string | null;
 };
+
+export type OmarchyThemeColors = {
+  background: string;
+  foreground: string;
+  accent: string;
+  selectionBackground: string;
+  selectionForeground: string;
+  muted: string;
+  surface: string;
+  surfaceRaised: string;
+  warning: string;
+  error: string;
+};
+
+export type GuiConfig = {
+  defaultMonitor: string;
+  previewQuality: PreviewQuality;
+  rememberLastFolder: boolean;
+  useOmarchyTheme: boolean;
+  windowWidth: number;
+  windowHeight: number;
+  livePreview: boolean;
+};

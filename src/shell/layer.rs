@@ -19,11 +19,13 @@ pub fn configure(window: &gtk::ApplicationWindow, args: &ShellArgs) {
     window.set_layer(Layer::Overlay);
     window.set_exclusive_zone(0);
     window.set_keyboard_mode(KeyboardMode::Exclusive);
+    window.set_anchor(Edge::Top, true);
     window.set_anchor(Edge::Bottom, true);
-    window.set_margin(Edge::Bottom, 48);
+    window.set_anchor(Edge::Left, true);
+    window.set_anchor(Edge::Right, true);
+    window.set_margin(Edge::Bottom, 0);
 
-    if args.position == ShellPosition::Center {
-        window.set_anchor(Edge::Top, true);
+    if args.position() == ShellPosition::Center {
         window.set_margin(Edge::Bottom, 0);
     }
 }

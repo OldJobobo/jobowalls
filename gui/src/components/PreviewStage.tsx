@@ -7,9 +7,16 @@ type Props = {
   activePath?: string;
   applying: boolean;
   previewQuality: PreviewQuality;
+  livePreview: boolean;
 };
 
-export default function PreviewStage({ item, activePath, applying, previewQuality }: Props) {
+export default function PreviewStage({
+  item,
+  activePath,
+  applying,
+  previewQuality,
+  livePreview,
+}: Props) {
   if (!item) {
     return (
       <section className="preview-stage empty-preview">
@@ -26,7 +33,7 @@ export default function PreviewStage({ item, activePath, applying, previewQualit
         <MediaPreview item={item} decorative mode="thumbnail" />
       </div>
       <div className="preview-media">
-        <MediaPreview item={item} alt={item.name} playLive quality={previewQuality} />
+        <MediaPreview item={item} alt={item.name} playLive={livePreview} quality={previewQuality} />
       </div>
       <div className="preview-caption">
         <span className="preview-name">{item.name}</span>

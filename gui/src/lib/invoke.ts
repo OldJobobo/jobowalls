@@ -1,7 +1,9 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import type {
   JobowallsStatus,
+  GuiConfig,
   MediaSource,
+  OmarchyThemeColors,
   PreviewQuality,
   SetPlanPreview,
   StartupFolder,
@@ -16,6 +18,14 @@ export function resolveStartupFolder(inputPath?: string | null) {
 
 export function scanFolder(path: string) {
   return invoke<WallpaperItem[]>("scan_folder", { path });
+}
+
+export function getOmarchyThemeColors() {
+  return invoke<OmarchyThemeColors | null>("get_omarchy_theme_colors");
+}
+
+export function getGuiConfig() {
+  return invoke<GuiConfig>("get_gui_config");
 }
 
 export function getStatus() {
