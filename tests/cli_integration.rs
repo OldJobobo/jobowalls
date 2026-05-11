@@ -511,6 +511,7 @@ fn collection_shuffle_records_shuffle_history() {
 #[test]
 fn restore_static_swaybg_state_reapplies_and_records_restore() {
     let harness = CliHarness::new();
+    harness.fake_hyprctl_monitors();
     harness.fake_swaybg();
     harness.fake_ps_without_omarchy_swaybg();
     let wallpaper = harness.root.join("restore.png");

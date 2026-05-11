@@ -68,7 +68,7 @@ jobs:
             gui/src-tauri
 
       - name: Build CLI
-        run: cargo build --release --locked
+        run: cargo build --release --locked --target-dir target/release-build
 
       - name: Install GUI dependencies
         run: npm --prefix gui ci
@@ -87,9 +87,9 @@ jobs:
           set -euo pipefail
           mkdir -p dist/jobowalls-x86_64-unknown-linux-gnu/bin
           mkdir -p dist/jobowalls-x86_64-unknown-linux-gnu/share/applications
-          install -m 0755 target/release/jobowalls \
+          install -m 0755 target/release-build/release/jobowalls \
             dist/jobowalls-x86_64-unknown-linux-gnu/bin/jobowalls
-          install -m 0755 target/release/jobowalls-shell \
+          install -m 0755 target/release-build/release/jobowalls-shell \
             dist/jobowalls-x86_64-unknown-linux-gnu/bin/jobowalls-shell
           install -m 0755 gui/src-tauri/target/release/jobowalls-gui \
             dist/jobowalls-x86_64-unknown-linux-gnu/bin/jobowalls-gui-bin
