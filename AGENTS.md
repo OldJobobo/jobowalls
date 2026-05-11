@@ -59,6 +59,12 @@ Name tests after behavior, for example `selects_mpvpaper_for_mp4` or
 Local Git history is unavailable here, so no existing convention can be
 inferred. Use imperative messages such as `Add initial CLI skeleton`.
 
+Keep commits narrowly scoped. Do not combine unrelated GUI, installer,
+backend, documentation, or test changes in one commit unless the user explicitly
+asks for a broad checkpoint commit. When using `scp` with multiple independent
+workstreams in the tree, prefer separate commits or ask for scope before
+staging everything.
+
 Pull requests should include a summary, validation steps, linked issues when
 applicable, and screenshots or recordings for visible wallpaper behavior. Call
 out config, state-file, or backend process-management changes.

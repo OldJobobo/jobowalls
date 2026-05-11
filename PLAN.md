@@ -306,6 +306,9 @@ Core v1 completion:
 
 Per-monitor wallpaper support:
 
+- [ ] Make restore use per-monitor backend and wallpaper entries as
+  authoritative for mixed-monitor state instead of cloning top-level state
+  values across every monitor.
 - [x] Add config parsing for `[monitors.profiles.<name>]` entries.
 - [x] Preserve existing monitor state when `set --monitor <name>` targets one
   monitor.
@@ -331,6 +334,13 @@ Live wallpaper pause support:
 
 Architecture and maintenance:
 
+- [ ] Verify a newly spawned `swaybg` process is still running before recording
+  static wallpaper state as successfully applied.
+- [ ] Improve static backend availability errors so missing `swaybg`/`awww`
+  reports a clear install or config action.
+- [ ] Document Omarchy current-background `swaybg` handling as an explicit
+  configured ownership rule, including tests that show the allowed process
+  matching boundary.
 - [x] Extract monitor discovery into `src/monitors.rs`.
 - [x] Introduce the planned `WallpaperBackend` trait once backend
   behavior is stable enough to benefit from the abstraction.
