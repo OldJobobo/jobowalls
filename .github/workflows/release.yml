@@ -70,14 +70,8 @@ jobs:
             .
             gui/src-tauri
 
-      - name: Build CLI
-        run: cargo build --release --locked --target-dir target/release-build
-
       - name: Install GUI dependencies
         run: npm --prefix gui ci
-
-      - name: Build GUI binary
-        run: npm --prefix gui run tauri:build -- --no-bundle
 
       - name: Test
         run: |
@@ -85,9 +79,18 @@ jobs:
           npm --prefix gui run typecheck
           cargo check --release --locked --manifest-path gui/src-tauri/Cargo.toml
 
+      - name: Build CLI
+        run: cargo build --release --locked --target-dir target/release-build
+
+      - name: Build GUI binary
+        run: npm --prefix gui run tauri:build -- --no-bundle
+
       - name: Package release artifact
         run: |
           set -euo pipefail
+          file target/release-build/release/jobowalls | grep -q 'ELF'
+          file target/release-build/release/jobowalls-shell | grep -q 'ELF'
+          file gui/src-tauri/target/release/jobowalls-gui | grep -q 'ELF'
           mkdir -p dist/jobowalls-x86_64-unknown-linux-gnu/bin
           mkdir -p dist/jobowalls-x86_64-unknown-linux-gnu/share/applications
           install -m 0755 target/release-build/release/jobowalls \
