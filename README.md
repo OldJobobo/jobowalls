@@ -204,6 +204,10 @@ Stop owned live wallpaper processes:
 jobowalls stop-live
 ```
 
+Run `jobowalls stop-live` whenever you want to terminate live wallpapers
+managed by `jobowalls`, including before using another wallpaper picker that
+sets a static background directly.
+
 Restore the last recorded wallpaper state:
 
 ```bash
@@ -413,4 +417,6 @@ bind = SUPER CTRL ALT, SPACE, exec, jobowalls-shell
 ```
 
 The tool only stops live wallpaper processes that it recorded as owned in its
-state file.
+state file. If another tool or script is about to replace the desktop
+background directly, run `jobowalls stop-live` first so any `jobowalls`-managed
+`mpvpaper` process is shut down cleanly.
