@@ -3,6 +3,21 @@
 All notable user-facing changes are tracked here. Versions follow semantic
 versioning while the project is pre-1.0.
 
+## 0.1.15 - 2026-05-11
+
+- Added vertical shell picker layout support with left and right side
+  placements.
+- Added `--layout` and `[shell].layout` so horizontal and vertical picker
+  orientation can be configured.
+- Added `Ctrl+P` placement cycling between bottom, left, top, and right picker
+  positions.
+- Improved shell layer-shell placement so the picker panel uses edge anchors
+  and calculated margins instead of a fullscreen panel surface.
+- Reduced shell carousel twitching during repeated key navigation by snapping
+  rapid same-direction repeats instead of restarting every transition.
+- Reduced preview churn while navigating live wallpapers and kept selection
+  borders in a fixed overlay so image loading does not resize cards.
+
 ## 0.1.14 - 2026-05-11
 
 - Added `VERSION`, `CHANGELOG.md`, and `RELEASE_NOTES.md`.

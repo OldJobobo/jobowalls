@@ -158,6 +158,7 @@ live_preview = true
 [shell]
 monitor = "all"
 position = "bottom"
+layout = "horizontal"
 height = 340
 live_preview = true
 EOF

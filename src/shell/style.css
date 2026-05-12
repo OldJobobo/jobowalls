@@ -6,6 +6,15 @@
   background: transparent;
 }
 
+.shell-overlay {
+  background: transparent;
+}
+
+.shell-placement-frame,
+.shell-placement-row {
+  background: transparent;
+}
+
 .shell-root {
   background: transparent;
   padding: 0;
@@ -14,6 +23,11 @@
 .carousel {
   min-width: 860px;
   min-height: 204px;
+}
+
+.carousel.vertical {
+  min-width: 340px;
+  min-height: 860px;
 }
 
 .thumb {
@@ -37,31 +51,61 @@
     0 0 0 1px rgba(255, 255, 255, 0.08);
 }
 
-.selected-image {
+.thumb.current .thumb-image {
   box-shadow:
     0 24px 56px rgba(0, 0, 0, 0.62),
-    0 0 0 1px rgba(255, 255, 255, 0.18),
+    0 0 24px rgba(216, 167, 79, 0.18);
+}
+
+.thumb.current .thumb-placeholder {
+  box-shadow:
+    0 18px 42px rgba(0, 0, 0, 0.5),
     0 0 24px rgba(216, 167, 79, 0.18);
 }
 
 .thumb.active .thumb-image {
   box-shadow:
     0 18px 42px rgba(0, 0, 0, 0.55),
-    0 2px 10px rgba(0, 0, 0, 0.45),
-    0 0 0 2px rgba(240, 195, 106, 0.72);
+    0 2px 10px rgba(0, 0, 0, 0.45);
 }
 
 .thumb.active .thumb-placeholder {
   box-shadow:
-    0 18px 42px rgba(0, 0, 0, 0.5),
-    0 0 0 2px rgba(240, 195, 106, 0.72);
+    0 18px 42px rgba(0, 0, 0, 0.5);
 }
 
-.thumb.active .selected-image {
+.thumb.active.current .thumb-image {
   box-shadow:
     0 24px 56px rgba(0, 0, 0, 0.62),
-    0 0 0 2px rgba(240, 195, 106, 0.82),
     0 0 24px rgba(216, 167, 79, 0.24);
+}
+
+.thumb.active.current .thumb-placeholder {
+  box-shadow:
+    0 18px 42px rgba(0, 0, 0, 0.5),
+    0 0 24px rgba(216, 167, 79, 0.24);
+}
+
+.thumb-ring {
+  background: transparent;
+  border: 2px solid transparent;
+  border-radius: 6px;
+}
+
+.thumb-ring.current {
+  border-color: rgba(255, 255, 255, 0.88);
+  box-shadow: 0 0 18px rgba(216, 167, 79, 0.16);
+}
+
+.thumb-ring.active {
+  border-color: rgba(240, 195, 106, 0.56);
+}
+
+.thumb-ring.active.current {
+  border-color: rgba(255, 255, 255, 0.92);
+  box-shadow:
+    0 0 0 2px rgba(240, 195, 106, 0.72),
+    0 0 18px rgba(216, 167, 79, 0.22);
 }
 
 .selected {

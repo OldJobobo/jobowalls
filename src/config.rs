@@ -261,6 +261,7 @@ pub enum PreviewQualityConfig {
 pub struct ShellConfig {
     pub monitor: String,
     pub position: ShellPositionConfig,
+    pub layout: ShellLayoutConfig,
     pub height: i32,
     pub live_preview: bool,
 }
@@ -270,6 +271,7 @@ impl Default for ShellConfig {
         Self {
             monitor: "all".to_string(),
             position: ShellPositionConfig::Bottom,
+            layout: ShellLayoutConfig::Horizontal,
             height: 340,
             live_preview: true,
         }
@@ -279,9 +281,20 @@ impl Default for ShellConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum ShellPositionConfig {
+    Top,
     #[default]
     Bottom,
     Center,
+    Left,
+    Right,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum ShellLayoutConfig {
+    #[default]
+    Horizontal,
+    Vertical,
 }
 
 #[cfg(test)]
@@ -317,6 +330,7 @@ mod tests {
         assert!(config.gui.live_preview);
         assert_eq!(config.shell.monitor, "all");
         assert_eq!(config.shell.position, ShellPositionConfig::Bottom);
+        assert_eq!(config.shell.layout, ShellLayoutConfig::Horizontal);
         assert_eq!(config.shell.height, 340);
         assert!(config.shell.live_preview);
     }
@@ -341,6 +355,7 @@ mod tests {
         assert!(raw.contains("preview_quality = \"balanced\""));
         assert!(raw.contains("[shell]"));
         assert!(raw.contains("position = \"bottom\""));
+        assert!(raw.contains("layout = \"horizontal\""));
     }
 
     #[test]
@@ -357,7 +372,8 @@ mod tests {
 
             [shell]
             monitor = "HDMI-A-1"
-            position = "center"
+            position = "top"
+            layout = "horizontal"
             height = 420
             live_preview = false
         "#;
@@ -372,7 +388,8 @@ mod tests {
         assert_eq!(config.gui.window_height, 540);
         assert!(!config.gui.live_preview);
         assert_eq!(config.shell.monitor, "HDMI-A-1");
-        assert_eq!(config.shell.position, ShellPositionConfig::Center);
+        assert_eq!(config.shell.position, ShellPositionConfig::Top);
+        assert_eq!(config.shell.layout, ShellLayoutConfig::Horizontal);
         assert_eq!(config.shell.height, 420);
         assert!(!config.shell.live_preview);
     }

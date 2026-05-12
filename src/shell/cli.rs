@@ -1,4 +1,4 @@
-use crate::config::{Config, ShellPositionConfig};
+use crate::config::{Config, ShellLayoutConfig, ShellPositionConfig};
 use clap::{Parser, ValueEnum};
 use std::path::PathBuf;
 
@@ -20,7 +20,11 @@ pub struct ShellArgs {
     #[arg(long, value_enum)]
     pub position: Option<ShellPosition>,
 
-    /// Debug window width in pixels.
+    /// Carousel layout orientation.
+    #[arg(long, value_enum)]
+    pub layout: Option<ShellLayout>,
+
+    /// Overlay width in pixels.
     #[arg(long, default_value_t = 0)]
     pub width: i32,
 
@@ -39,8 +43,17 @@ pub struct ShellArgs {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum ShellPosition {
+    Top,
     Bottom,
     Center,
+    Left,
+    Right,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ShellLayout {
+    Horizontal,
+    Vertical,
 }
 
 impl ShellArgs {
@@ -50,6 +63,9 @@ impl ShellArgs {
         }
         if self.position.is_none() {
             self.position = Some(config.shell.position.into());
+        }
+        if self.layout.is_none() {
+            self.layout = Some(config.shell.layout.into());
         }
         if self.height.is_none() {
             self.height = Some(config.shell.height);
@@ -68,6 +84,10 @@ impl ShellArgs {
         self.position.unwrap_or(ShellPosition::Bottom)
     }
 
+    pub fn layout(&self) -> ShellLayout {
+        self.layout.unwrap_or(ShellLayout::Horizontal)
+    }
+
     pub fn height(&self) -> i32 {
         self.height.unwrap_or(340)
     }
@@ -76,8 +96,20 @@ impl ShellArgs {
 impl From<ShellPositionConfig> for ShellPosition {
     fn from(value: ShellPositionConfig) -> Self {
         match value {
+            ShellPositionConfig::Top => Self::Top,
             ShellPositionConfig::Bottom => Self::Bottom,
             ShellPositionConfig::Center => Self::Center,
+            ShellPositionConfig::Left => Self::Left,
+            ShellPositionConfig::Right => Self::Right,
+        }
+    }
+}
+
+impl From<ShellLayoutConfig> for ShellLayout {
+    fn from(value: ShellLayoutConfig) -> Self {
+        match value {
+            ShellLayoutConfig::Horizontal => Self::Horizontal,
+            ShellLayoutConfig::Vertical => Self::Vertical,
         }
     }
 }
@@ -85,13 +117,14 @@ impl From<ShellPositionConfig> for ShellPosition {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{Config, ShellPositionConfig};
+    use crate::config::{Config, ShellLayoutConfig, ShellPositionConfig};
 
     #[test]
     fn config_supplies_missing_shell_args() {
         let mut config = Config::default();
         config.shell.monitor = "DP-1".to_string();
         config.shell.position = ShellPositionConfig::Center;
+        config.shell.layout = ShellLayoutConfig::Vertical;
         config.shell.height = 410;
         config.shell.live_preview = false;
 
@@ -99,6 +132,7 @@ mod tests {
             folder: None,
             monitor: None,
             position: None,
+            layout: None,
             width: 0,
             height: None,
             no_live_preview: false,
@@ -108,6 +142,7 @@ mod tests {
 
         assert_eq!(args.monitor(), "DP-1");
         assert_eq!(args.position(), ShellPosition::Center);
+        assert_eq!(args.layout(), ShellLayout::Vertical);
         assert_eq!(args.height(), 410);
         assert!(args.no_live_preview);
     }
@@ -117,12 +152,14 @@ mod tests {
         let mut config = Config::default();
         config.shell.monitor = "DP-1".to_string();
         config.shell.position = ShellPositionConfig::Center;
+        config.shell.layout = ShellLayoutConfig::Vertical;
         config.shell.height = 410;
 
         let args = ShellArgs {
             folder: None,
             monitor: Some("HDMI-A-1".to_string()),
             position: Some(ShellPosition::Bottom),
+            layout: Some(ShellLayout::Horizontal),
             width: 0,
             height: Some(300),
             no_live_preview: false,
@@ -132,6 +169,7 @@ mod tests {
 
         assert_eq!(args.monitor(), "HDMI-A-1");
         assert_eq!(args.position(), ShellPosition::Bottom);
+        assert_eq!(args.layout(), ShellLayout::Horizontal);
         assert_eq!(args.height(), 300);
     }
 }

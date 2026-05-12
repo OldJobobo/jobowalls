@@ -24,6 +24,7 @@ impl ScriptHarness {
         let appdir = prefix.join("share/applications");
         let fakebin = root.join("fakebin");
         fs::create_dir_all(&fakebin).unwrap();
+        prepare_fake_checkout(&root);
 
         Self {
             _dir: dir,
@@ -45,6 +46,7 @@ impl ScriptHarness {
         command
             .arg(script)
             .args(args)
+            .current_dir(&self.root)
             .env("PREFIX", &self.prefix)
             .env("BINDIR", &self.bindir)
             .env("APPDIR", &self.appdir)
@@ -57,6 +59,7 @@ impl ScriptHarness {
         let mut command = Command::new("bash");
         command
             .arg("install.sh")
+            .current_dir(&self.root)
             .env("PATH", self.path())
             .env("HOME", self.root.join("home"));
         command.output().unwrap()
@@ -140,6 +143,28 @@ cp "{}" "$out"
         );
         self.fake_program("curl", &body);
     }
+}
+
+fn prepare_fake_checkout(root: &Path) {
+    let source_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let gui_dir = root.join("gui");
+    let packaging_dir = root.join("packaging/linux");
+    fs::create_dir_all(&gui_dir).unwrap();
+    fs::create_dir_all(&packaging_dir).unwrap();
+
+    for path in ["install.sh", "uninstall.sh", "Cargo.toml"] {
+        fs::copy(source_root.join(path), root.join(path)).unwrap();
+    }
+    fs::copy(
+        source_root.join("gui/package.json"),
+        gui_dir.join("package.json"),
+    )
+    .unwrap();
+    fs::copy(
+        source_root.join("packaging/linux/dev.jobowalls.picker.desktop"),
+        packaging_dir.join("dev.jobowalls.picker.desktop"),
+    )
+    .unwrap();
 }
 
 fn make_executable(path: &Path) {
@@ -315,6 +340,7 @@ fn install_rejects_unsupported_source_build_profile() {
     let mut command = Command::new("bash");
     let output = command
         .arg("install.sh")
+        .current_dir(&harness.root)
         .env("BUILD_FROM_SOURCE", "1")
         .env("PROFILE", "weird")
         .env("PREFIX", &harness.prefix)

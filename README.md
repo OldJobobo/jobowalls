@@ -260,6 +260,7 @@ live_preview = true
 [shell]
 monitor = "all"
 position = "bottom"
+layout = "horizontal"
 height = 340
 live_preview = true
 ```
@@ -322,24 +323,26 @@ Useful options:
 
 ```bash
 jobowalls-shell --monitor all ~/Pictures/wallpapers
+jobowalls-shell --position left --layout vertical ~/Pictures/wallpapers
 jobowalls-shell --no-live-preview ~/Pictures/wallpapers
 jobowalls-shell --debug-window ~/Pictures/wallpapers
 ```
 
-The shell uses `[shell].monitor`, `[shell].position`, `[shell].height`, and
-`[shell].live_preview` as defaults. Flags such as `--monitor`,
-`--position`, `--height`, and `--no-live-preview` override config values for
-that launch.
+The shell uses `[shell].monitor`, `[shell].position`, `[shell].layout`,
+`[shell].height`, and `[shell].live_preview` as defaults. Flags such as
+`--monitor`, `--position`, `--layout`, `--height`, and `--no-live-preview`
+override config values for that launch.
 
 Keyboard controls:
 
 ```text
-Left / H       previous wallpaper
-Right / L      next wallpaper
-Enter          apply selected wallpaper and close
-S              shuffle selection
-R              rescan current folder
-Escape         restore original preview and close
+Left / Up / H / K       previous wallpaper
+Right / Down / L / J    next wallpaper
+Ctrl+P                  move picker clockwise
+Enter                   apply selected wallpaper and close
+S                       shuffle selection
+R                       rescan current folder
+Escape                  restore original preview and close
 ```
 
 Mouse wheel or trackpad scrolling moves the carousel. Clicking the left or

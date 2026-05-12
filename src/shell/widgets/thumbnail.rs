@@ -68,6 +68,7 @@ pub fn build_with_image_dimensions(
         root.add_css_class("active");
     }
     if force_top {
+        root.add_css_class("current");
         root.add_css_class("top-card");
     }
     let allocation_width = width + (SHADOW_PAD_X * 2);
@@ -83,13 +84,9 @@ pub fn build_with_image_dimensions(
         overlay.set_margin_end(SHADOW_PAD_X);
         overlay.set_margin_top(SHADOW_PAD_TOP);
         overlay.set_margin_bottom(SHADOW_PAD_BOTTOM);
-        let selected = role == ThumbnailRole::Selected;
-        if let Some(display_path) = preview::display_path(item, selected, animate_live) {
+        if let Some(display_path) = preview::display_path(item, force_top, animate_live) {
             let image = gtk::Picture::for_filename(display_path);
             image.add_css_class("thumb-image");
-            if selected {
-                image.add_css_class("selected-image");
-            }
             image.set_can_shrink(true);
             image.set_content_fit(gtk::ContentFit::Cover);
             image.set_width_request(width);
@@ -102,6 +99,19 @@ pub fn build_with_image_dimensions(
             placeholder.set_height_request(height);
             overlay.set_child(Some(&placeholder));
         }
+
+        let ring = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        ring.add_css_class("thumb-ring");
+        if force_top {
+            ring.add_css_class("current");
+        }
+        if active {
+            ring.add_css_class("active");
+        }
+        ring.set_can_target(false);
+        ring.set_width_request(width);
+        ring.set_height_request(height);
+        overlay.add_overlay(&ring);
 
         if item.is_live() {
             let badge = gtk::Label::new(Some("\u{f0230}"));
