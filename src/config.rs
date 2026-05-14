@@ -231,6 +231,7 @@ pub struct GuiConfig {
     pub window_width: u32,
     pub window_height: u32,
     pub live_preview: bool,
+    pub theme_collections: ThemeCollectionsConfig,
 }
 
 impl Default for GuiConfig {
@@ -243,6 +244,7 @@ impl Default for GuiConfig {
             window_width: 1040,
             window_height: 620,
             live_preview: true,
+            theme_collections: ThemeCollectionsConfig::default(),
         }
     }
 }
@@ -254,6 +256,57 @@ pub enum PreviewQualityConfig {
     #[default]
     Balanced,
     Pretty,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ThemeCollectionsConfig {
+    pub enabled: bool,
+    pub include_stock_themes: bool,
+    pub user_themes_dir: PathBuf,
+    pub stock_themes_dir: PathBuf,
+    pub user_backgrounds_dir: PathBuf,
+    pub add_target: ThemeCollectionAddTargetConfig,
+    pub author: ThemeCollectionsAuthorConfig,
+}
+
+impl Default for ThemeCollectionsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            include_stock_themes: false,
+            user_themes_dir: PathBuf::from("~/.config/omarchy/themes"),
+            stock_themes_dir: PathBuf::from("~/.local/share/omarchy/themes"),
+            user_backgrounds_dir: PathBuf::from("~/.config/omarchy/backgrounds"),
+            add_target: ThemeCollectionAddTargetConfig::UserBackgrounds,
+            author: ThemeCollectionsAuthorConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum ThemeCollectionAddTargetConfig {
+    #[default]
+    UserBackgrounds,
+    ThemeRepo,
+    Ask,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ThemeCollectionsAuthorConfig {
+    pub enabled: bool,
+    pub theme_roots: Vec<PathBuf>,
+}
+
+impl Default for ThemeCollectionsAuthorConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            theme_roots: vec![PathBuf::from("~/Projects/themes")],
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -328,6 +381,13 @@ mod tests {
         assert_eq!(config.gui.window_width, 1040);
         assert_eq!(config.gui.window_height, 620);
         assert!(config.gui.live_preview);
+        assert!(!config.gui.theme_collections.enabled);
+        assert!(!config.gui.theme_collections.include_stock_themes);
+        assert_eq!(
+            config.gui.theme_collections.add_target,
+            ThemeCollectionAddTargetConfig::UserBackgrounds
+        );
+        assert!(!config.gui.theme_collections.author.enabled);
         assert_eq!(config.shell.monitor, "all");
         assert_eq!(config.shell.position, ShellPositionConfig::Bottom);
         assert_eq!(config.shell.layout, ShellLayoutConfig::Horizontal);
@@ -353,6 +413,9 @@ mod tests {
         assert!(raw.contains("[mpvpaper]"));
         assert!(raw.contains("[gui]"));
         assert!(raw.contains("preview_quality = \"balanced\""));
+        assert!(raw.contains("[gui.theme_collections]"));
+        assert!(raw.contains("add_target = \"user-backgrounds\""));
+        assert!(raw.contains("[gui.theme_collections.author]"));
         assert!(raw.contains("[shell]"));
         assert!(raw.contains("position = \"bottom\""));
         assert!(raw.contains("layout = \"horizontal\""));
@@ -369,6 +432,18 @@ mod tests {
             window_width = 900
             window_height = 540
             live_preview = false
+
+            [gui.theme_collections]
+            enabled = true
+            include_stock_themes = true
+            user_themes_dir = "/tmp/themes"
+            stock_themes_dir = "/tmp/stock"
+            user_backgrounds_dir = "/tmp/backgrounds"
+            add_target = "ask"
+
+            [gui.theme_collections.author]
+            enabled = true
+            theme_roots = ["/tmp/repos"]
 
             [shell]
             monitor = "HDMI-A-1"
@@ -387,6 +462,21 @@ mod tests {
         assert_eq!(config.gui.window_width, 900);
         assert_eq!(config.gui.window_height, 540);
         assert!(!config.gui.live_preview);
+        assert!(config.gui.theme_collections.enabled);
+        assert!(config.gui.theme_collections.include_stock_themes);
+        assert_eq!(
+            config.gui.theme_collections.user_themes_dir,
+            PathBuf::from("/tmp/themes")
+        );
+        assert_eq!(
+            config.gui.theme_collections.add_target,
+            ThemeCollectionAddTargetConfig::Ask
+        );
+        assert!(config.gui.theme_collections.author.enabled);
+        assert_eq!(
+            config.gui.theme_collections.author.theme_roots,
+            vec![PathBuf::from("/tmp/repos")]
+        );
         assert_eq!(config.shell.monitor, "HDMI-A-1");
         assert_eq!(config.shell.position, ShellPositionConfig::Top);
         assert_eq!(config.shell.layout, ShellLayoutConfig::Horizontal);

@@ -155,6 +155,18 @@ window_width = 1040
 window_height = 620
 live_preview = true
 
+[gui.theme_collections]
+enabled = false
+include_stock_themes = false
+user_themes_dir = "~/.config/omarchy/themes"
+stock_themes_dir = "~/.local/share/omarchy/themes"
+user_backgrounds_dir = "~/.config/omarchy/backgrounds"
+add_target = "user-backgrounds"
+
+[gui.theme_collections.author]
+enabled = false
+theme_roots = ["~/Projects/themes"]
+
 [shell]
 monitor = "all"
 position = "bottom"
@@ -390,22 +402,22 @@ if [[ -n "${GDK_BACKEND:-}" ]]; then
   exec "$bin" "$@"
 fi
 
-if [[ -n "${DISPLAY:-}" ]]; then
-  GDK_BACKEND=x11 "$bin" "$@"
+if [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
+  GDK_BACKEND=wayland "$bin" "$@"
   status=$?
-  if [[ "$status" -ne 0 && -n "${WAYLAND_DISPLAY:-}" ]]; then
-    echo "jobowalls-gui: X11 launch failed with status $status; retrying with GDK_BACKEND=wayland" >&2
-    GDK_BACKEND=wayland "$bin" "$@"
+  if [[ "$status" -ne 0 && -n "${DISPLAY:-}" ]]; then
+    echo "jobowalls-gui: Wayland launch failed with status $status; retrying with GDK_BACKEND=x11" >&2
+    GDK_BACKEND=x11 "$bin" "$@"
     exit $?
   fi
   exit "$status"
 fi
 
-GDK_BACKEND=wayland "$bin" "$@"
+GDK_BACKEND=x11 "$bin" "$@"
 status=$?
 
 if [[ "$status" -ne 0 ]]; then
-  echo "jobowalls-gui: Wayland launch failed with status $status" >&2
+  echo "jobowalls-gui: X11 launch failed with status $status" >&2
   exit "$status"
 fi
 
@@ -508,7 +520,7 @@ install_from_source() {
   if [[ "$PROFILE" == "release" ]]; then
     npm --prefix "$ROOT_DIR/gui" run tauri:build -- --no-bundle
   else
-    cargo build "${cargo_args[@]}" --manifest-path "$ROOT_DIR/gui/src-tauri/Cargo.toml"
+    npm --prefix "$ROOT_DIR/gui" run tauri:build -- --debug --no-bundle
   fi
 
   prepare_install_dirs

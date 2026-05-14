@@ -12,6 +12,12 @@ export type StartupFolder = {
   source: string;
 };
 
+export type GuiStartupOptions = {
+  folder: string | null;
+  monitor: string | null;
+  livePreview: boolean | null;
+};
+
 export type SetPlanPreview = {
   wallpaper: string;
   media_kind: MediaKind;
@@ -62,4 +68,53 @@ export type GuiConfig = {
   windowWidth: number;
   windowHeight: number;
   livePreview: boolean;
+};
+
+export type GuiState = {
+  version: number;
+  lastFolder?: string | null;
+  lastMonitor?: string | null;
+  livePreview?: boolean | null;
+  previewQuality?: PreviewQuality | null;
+  previewMode?: boolean | null;
+};
+
+export type CollectionSummary = {
+  id: string;
+  name: string;
+  count: number;
+  source_folder?: string | null;
+};
+
+export type CollectionDetail = CollectionSummary & {
+  items: WallpaperItem[];
+};
+
+export type ThemeCollectionSource = "user-theme" | "stock-theme" | "author-theme";
+export type ThemeCollectionAddTarget = "user-backgrounds" | "theme-repo";
+
+export type ThemeCollectionSummary = {
+  id: string;
+  name: string;
+  theme_name: string;
+  count: number;
+  source: ThemeCollectionSource;
+  installed_path: string;
+  real_path: string;
+  theme_backgrounds_path: string;
+  user_backgrounds_path: string;
+  can_write_user_backgrounds: boolean;
+  can_write_theme_repo: boolean;
+  add_requires_choice: boolean;
+  default_add_target: ThemeCollectionAddTarget;
+};
+
+export type ThemeCollectionDetail = ThemeCollectionSummary & {
+  items: WallpaperItem[];
+};
+
+export type ThemeCollectionImport = {
+  collection: ThemeCollectionDetail;
+  copied_path: string;
+  target: ThemeCollectionAddTarget;
 };

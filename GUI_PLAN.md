@@ -195,7 +195,7 @@ MVP controls:
 Left / H       previous wallpaper
 Right / L      next wallpaper
 Enter          apply selected wallpaper
-Space          preview or apply, depending configured mode
+Space          toggle live previews
 S              shuffle selection
 O              open/change folder
 R              rescan current folder

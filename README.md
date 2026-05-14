@@ -279,6 +279,13 @@ Launch with a specific folder:
 jobowalls-gui ~/Pictures/wallpapers
 ```
 
+Launch with a specific monitor or live preview mode:
+
+```bash
+jobowalls-gui --monitor DP-1 ~/Pictures/wallpapers
+jobowalls-gui --no-preview
+```
+
 The picker resolves its startup folder in this order:
 
 1. Folder argument passed to `jobowalls-gui`.
@@ -296,6 +303,7 @@ Keyboard controls:
 Left / H       previous wallpaper
 Right / L      next wallpaper
 Enter          apply selected wallpaper
+Space          toggle live previews
 S              shuffle selection
 O              open/change folder
 R              rescan current folder

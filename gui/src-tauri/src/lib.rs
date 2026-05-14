@@ -81,6 +81,14 @@ struct StartupFolder {
     source: String,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct GuiStartupOptions {
+    folder: Option<String>,
+    monitor: Option<String>,
+    live_preview: Option<bool>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct MediaSource {
@@ -142,13 +150,23 @@ struct AppConfig {
     gui: GuiConfig,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GuiState {
     version: u8,
     last_folder: Option<String>,
     last_monitor: Option<String>,
-    preview_mode: bool,
+    live_preview: Option<bool>,
+    preview_quality: Option<PreviewQuality>,
+    #[serde(default)]
+    preview_mode: Option<bool>,
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct GuiInvocation {
+    folder: Option<String>,
+    monitor: Option<String>,
+    live_preview: Option<bool>,
 }
 
 impl GuiState {
@@ -166,8 +184,10 @@ impl GuiState {
         Self {
             version: 1,
             last_folder: None,
-            last_monitor: Some("all".to_string()),
-            preview_mode: false,
+            last_monitor: None,
+            live_preview: None,
+            preview_quality: None,
+            preview_mode: None,
         }
     }
 
@@ -190,10 +210,20 @@ impl GuiState {
 }
 
 #[tauri::command]
+fn get_startup_options() -> GuiStartupOptions {
+    let invocation = parse_gui_invocation(std::env::args().skip(1));
+    GuiStartupOptions {
+        folder: invocation.folder,
+        monitor: invocation.monitor,
+        live_preview: invocation.live_preview,
+    }
+}
+
+#[tauri::command]
 fn resolve_startup_folder(input_path: Option<String>) -> Result<StartupFolder, String> {
     let config = load_gui_config();
     if let Some(path) = input_path
-        .or_else(first_path_arg)
+        .or_else(|| parse_gui_invocation(std::env::args().skip(1)).folder)
         .and_then(|path| existing_dir(PathBuf::from(path)))
     {
         return Ok(StartupFolder {
@@ -303,9 +333,35 @@ fn get_gui_config() -> Result<GuiConfig, String> {
 }
 
 #[tauri::command]
+fn get_gui_state() -> GuiState {
+    GuiState::load()
+}
+
+#[tauri::command]
+fn get_monitor_names() -> Vec<String> {
+    run_jobowalls(["list-monitors"])
+        .map(|output| {
+            output
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[tauri::command]
 fn get_status() -> Result<serde_json::Value, String> {
     let output = run_jobowalls(["status", "--json"])?;
     serde_json::from_str(&output).map_err(|error| format!("failed to parse status JSON: {error}"))
+}
+
+#[tauri::command]
+fn adopt_omarchy_background() -> Result<serde_json::Value, String> {
+    let output = run_jobowalls(["adopt-omarchy", "--json"])?;
+    serde_json::from_str(&output)
+        .map_err(|error| format!("failed to parse Omarchy adoption JSON: {error}"))
 }
 
 #[tauri::command]
@@ -332,6 +388,91 @@ fn apply_wallpaper(path: String, monitor: Option<String>) -> Result<(), String> 
         args.push(monitor);
     }
     run_jobowalls(args).map(|_| ())
+}
+
+#[tauri::command]
+fn list_collections() -> Result<serde_json::Value, String> {
+    let output = run_jobowalls(["collection", "list", "--json"])?;
+    serde_json::from_str(&output)
+        .map_err(|error| format!("failed to parse collections JSON: {error}"))
+}
+
+#[tauri::command]
+fn create_collection(name: String) -> Result<serde_json::Value, String> {
+    let output = run_jobowalls(["collection", "create", name.as_str(), "--json"])?;
+    serde_json::from_str(&output)
+        .map_err(|error| format!("failed to parse collection JSON: {error}"))
+}
+
+#[tauri::command]
+fn get_collection(id: String) -> Result<serde_json::Value, String> {
+    let output = run_jobowalls(["collection", "show", id.as_str(), "--json"])?;
+    serde_json::from_str(&output)
+        .map_err(|error| format!("failed to parse collection JSON: {error}"))
+}
+
+#[tauri::command]
+fn add_to_collection(id: String, paths: Vec<String>) -> Result<serde_json::Value, String> {
+    let mut args = vec![
+        "collection".to_string(),
+        "add".to_string(),
+        id,
+        "--json".to_string(),
+    ];
+    args.extend(paths);
+    let output = run_jobowalls(args)?;
+    serde_json::from_str(&output)
+        .map_err(|error| format!("failed to parse collection JSON: {error}"))
+}
+
+#[tauri::command]
+fn remove_from_collection(id: String, path: String) -> Result<serde_json::Value, String> {
+    let output = run_jobowalls(["collection", "remove", id.as_str(), path.as_str(), "--json"])?;
+    serde_json::from_str(&output)
+        .map_err(|error| format!("failed to parse collection JSON: {error}"))
+}
+
+#[tauri::command]
+fn delete_collection(id: String) -> Result<serde_json::Value, String> {
+    let output = run_jobowalls(["collection", "delete", id.as_str(), "--json"])?;
+    serde_json::from_str(&output)
+        .map_err(|error| format!("failed to parse collection JSON: {error}"))
+}
+
+#[tauri::command]
+fn list_theme_collections() -> Result<serde_json::Value, String> {
+    let output = run_jobowalls(["theme-collections", "list", "--json"])?;
+    serde_json::from_str(&output)
+        .map_err(|error| format!("failed to parse theme collections JSON: {error}"))
+}
+
+#[tauri::command]
+fn get_theme_collection(id: String) -> Result<serde_json::Value, String> {
+    let output = run_jobowalls(["theme-collections", "show", id.as_str(), "--json"])?;
+    serde_json::from_str(&output)
+        .map_err(|error| format!("failed to parse theme collection JSON: {error}"))
+}
+
+#[tauri::command]
+fn add_to_theme_collection(
+    id: String,
+    path: String,
+    target: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let mut args = vec![
+        "theme-collections".to_string(),
+        "add".to_string(),
+        id,
+        path,
+        "--json".to_string(),
+    ];
+    if let Some(target) = target.filter(|target| !target.is_empty()) {
+        args.push("--target".to_string());
+        args.push(target);
+    }
+    let output = run_jobowalls(args)?;
+    serde_json::from_str(&output)
+        .map_err(|error| format!("failed to parse theme collection JSON: {error}"))
 }
 
 #[tauri::command]
@@ -473,6 +614,34 @@ fn save_last_folder(path: String) -> Result<(), String> {
     let mut state = GuiState::load();
     state.version = 1;
     state.last_folder = Some(path);
+    state.preview_mode = None;
+    state.save()
+}
+
+#[tauri::command]
+fn save_last_monitor(monitor: String) -> Result<(), String> {
+    let mut state = GuiState::load();
+    state.version = 1;
+    state.last_monitor = Some(normalize_monitor(monitor));
+    state.preview_mode = None;
+    state.save()
+}
+
+#[tauri::command]
+fn save_live_preview(live_preview: bool) -> Result<(), String> {
+    let mut state = GuiState::load();
+    state.version = 1;
+    state.live_preview = Some(live_preview);
+    state.preview_mode = None;
+    state.save()
+}
+
+#[tauri::command]
+fn save_preview_quality(preview_quality: PreviewQuality) -> Result<(), String> {
+    let mut state = GuiState::load();
+    state.version = 1;
+    state.preview_quality = Some(preview_quality);
+    state.preview_mode = None;
     state.save()
 }
 
@@ -481,10 +650,51 @@ fn close_picker(app: AppHandle) {
     app.exit(0);
 }
 
-fn first_path_arg() -> Option<String> {
-    std::env::args()
-        .skip(1)
-        .find(|arg| !arg.starts_with('-') && arg != "jobowalls-gui")
+fn parse_gui_invocation<I, S>(args: I) -> GuiInvocation
+where
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+{
+    let mut invocation = GuiInvocation::default();
+    let mut args = args.into_iter().map(Into::into).peekable();
+
+    while let Some(arg) = args.next() {
+        if arg == "--monitor" {
+            if let Some(value) = args.next().map(normalize_monitor) {
+                invocation.monitor = Some(value);
+            }
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--monitor=") {
+            invocation.monitor = Some(normalize_monitor(value.to_string()));
+            continue;
+        }
+        if arg == "--preview" {
+            invocation.live_preview = Some(true);
+            continue;
+        }
+        if arg == "--no-preview" {
+            invocation.live_preview = Some(false);
+            continue;
+        }
+        if arg.starts_with('-') {
+            continue;
+        }
+        if invocation.folder.is_none() && arg != "jobowalls-gui" {
+            invocation.folder = Some(arg);
+        }
+    }
+
+    invocation
+}
+
+fn normalize_monitor(monitor: String) -> String {
+    let monitor = monitor.trim();
+    if monitor.is_empty() {
+        "all".to_string()
+    } else {
+        monitor.to_string()
+    }
 }
 
 fn existing_dir(path: PathBuf) -> Option<PathBuf> {
@@ -665,7 +875,7 @@ fn generate_video_poster(path: &Path) -> Result<PathBuf, String> {
         })?;
     }
 
-    if try_ffmpegthumbnailer(path, &cache_path)? || try_ffmpeg(path, &cache_path)? {
+    if try_ffmpeg(path, &cache_path)? || try_ffmpegthumbnailer(path, &cache_path)? {
         return Ok(cache_path);
     }
 
@@ -690,8 +900,8 @@ fn generate_video_thumbnail(path: &Path) -> Result<PathBuf, String> {
         })?;
     }
 
-    if try_ffmpegthumbnailer_with_size(path, &cache_path, 520)?
-        || try_ffmpeg_with_size(path, &cache_path, 520)?
+    if try_ffmpeg_with_size(path, &cache_path, 520)?
+        || try_ffmpegthumbnailer_with_size(path, &cache_path, 520)?
     {
         return Ok(cache_path);
     }
@@ -1193,13 +1403,26 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
+            get_startup_options,
             resolve_startup_folder,
             scan_folder,
             get_omarchy_theme_colors,
             get_gui_config,
+            get_gui_state,
+            get_monitor_names,
             get_status,
+            adopt_omarchy_background,
             preview_plan,
             apply_wallpaper,
+            list_collections,
+            create_collection,
+            get_collection,
+            add_to_collection,
+            remove_from_collection,
+            delete_collection,
+            list_theme_collections,
+            get_theme_collection,
+            add_to_theme_collection,
             get_media_source,
             get_media_data_source,
             get_thumbnail_source,
@@ -1208,6 +1431,9 @@ pub fn run() {
             get_live_preview_data_source,
             warm_live_preview,
             save_last_folder,
+            save_last_monitor,
+            save_live_preview,
+            save_preview_quality,
             close_picker,
         ])
         .run(tauri::generate_context!())
@@ -1232,6 +1458,62 @@ mod tests {
         assert_eq!(
             expand_home(PathBuf::from("/tmp/walls")),
             PathBuf::from("/tmp/walls")
+        );
+    }
+
+    #[test]
+    fn parses_gui_invocation_folder_only() {
+        let invocation = parse_gui_invocation(["/tmp/walls"]);
+
+        assert_eq!(
+            invocation,
+            GuiInvocation {
+                folder: Some("/tmp/walls".to_string()),
+                monitor: None,
+                live_preview: None,
+            }
+        );
+    }
+
+    #[test]
+    fn parses_gui_invocation_monitor_without_treating_value_as_folder() {
+        let invocation = parse_gui_invocation(["--monitor", "DP-1", "/tmp/walls"]);
+
+        assert_eq!(
+            invocation,
+            GuiInvocation {
+                folder: Some("/tmp/walls".to_string()),
+                monitor: Some("DP-1".to_string()),
+                live_preview: None,
+            }
+        );
+    }
+
+    #[test]
+    fn parses_gui_invocation_monitor_equals_and_preview_flags() {
+        let invocation = parse_gui_invocation(["--monitor=HDMI-A-1", "--no-preview", "/tmp/walls"]);
+
+        assert_eq!(
+            invocation,
+            GuiInvocation {
+                folder: Some("/tmp/walls".to_string()),
+                monitor: Some("HDMI-A-1".to_string()),
+                live_preview: Some(false),
+            }
+        );
+    }
+
+    #[test]
+    fn normalizes_empty_gui_monitor_to_all() {
+        let invocation = parse_gui_invocation(["--monitor", "  ", "--preview"]);
+
+        assert_eq!(
+            invocation,
+            GuiInvocation {
+                folder: None,
+                monitor: Some("all".to_string()),
+                live_preview: Some(true),
+            }
         );
     }
 

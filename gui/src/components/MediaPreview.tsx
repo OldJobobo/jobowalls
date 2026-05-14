@@ -1,4 +1,4 @@
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { ImageIcon, Video } from "lucide-react";
 import {
   getLivePreviewDataSource,
@@ -22,8 +22,15 @@ type Props = {
 
 const sourceCache = new Map<string, Promise<MediaSource>>();
 const fallbackCache = new Map<string, Promise<MediaSource>>();
-let assetPreviewFailed = window.localStorage.getItem("jobowalls:assetPreviewFailed") === "1";
+let assetPreviewFailed = false;
 const PREVIEW_UPGRADE_DELAY_MS = 220;
+const MAX_ASSET_CACHE_ENTRIES = 120;
+const MAX_FALLBACK_CACHE_ENTRIES = 36;
+
+export function clearMediaPreviewCache() {
+  sourceCache.clear();
+  fallbackCache.clear();
+}
 
 function MediaPreview({
   item,
@@ -37,9 +44,15 @@ function MediaPreview({
   const [src, setSrc] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   const [fallbackTried, setFallbackTried] = useState(false);
+  const loadedIdentity = useRef(`${mode}:${item.path}`);
 
   useEffect(() => {
     let cancelled = false;
+    const identity = `${mode}:${item.path}`;
+    if (loadedIdentity.current !== identity) {
+      loadedIdentity.current = identity;
+      setSrc(null);
+    }
     setFailed(false);
     setFallbackTried(false);
 
@@ -94,7 +107,7 @@ function MediaPreview({
 
   async function loadFallback() {
     assetPreviewFailed = true;
-    window.localStorage.setItem("jobowalls:assetPreviewFailed", "1");
+    sourceCache.clear();
     if (fallbackTried) {
       setFailed(true);
       return;
@@ -173,7 +186,7 @@ function cachedThumbnailSource(path: string) {
 }
 
 function cachedLivePreviewSource(path: string, quality: PreviewQuality) {
-  return getLivePreviewSource(path, quality);
+  return cachedSource(`live:${quality}:${path}`, () => getLivePreviewSource(path, quality));
 }
 
 function cachedMediaDataSource(path: string) {
@@ -185,7 +198,7 @@ function cachedThumbnailDataSource(path: string) {
 }
 
 function cachedLivePreviewDataSource(path: string, quality: PreviewQuality) {
-  return getLivePreviewDataSource(path, quality);
+  return cachedFallback(`live:${quality}:${path}`, () => getLivePreviewDataSource(path, quality));
 }
 
 function cachedSource(key: string, load: () => Promise<MediaSource>) {
@@ -198,7 +211,7 @@ function cachedSource(key: string, load: () => Promise<MediaSource>) {
     sourceCache.delete(key);
     throw error;
   });
-  sourceCache.set(key, promise);
+  rememberCachedSource(sourceCache, key, promise, MAX_ASSET_CACHE_ENTRIES);
   return promise;
 }
 
@@ -212,8 +225,24 @@ function cachedFallback(key: string, load: () => Promise<MediaSource>) {
     fallbackCache.delete(key);
     throw error;
   });
-  fallbackCache.set(key, promise);
+  rememberCachedSource(fallbackCache, key, promise, MAX_FALLBACK_CACHE_ENTRIES);
   return promise;
+}
+
+function rememberCachedSource(
+  cache: Map<string, Promise<MediaSource>>,
+  key: string,
+  promise: Promise<MediaSource>,
+  maxEntries: number,
+) {
+  cache.set(key, promise);
+  while (cache.size > maxEntries) {
+    const oldest = cache.keys().next().value;
+    if (!oldest) {
+      return;
+    }
+    cache.delete(oldest);
+  }
 }
 
 function delay(ms: number) {

@@ -1,7 +1,7 @@
 use serde_json::Value;
 use std::{
     env, fs,
-    os::unix::fs::PermissionsExt,
+    os::unix::fs::{PermissionsExt, symlink},
     path::{Path, PathBuf},
     process::{Command, Output},
 };
@@ -46,6 +46,7 @@ impl CliHarness {
             .arg("--state")
             .arg(&self.state)
             .env("PATH", self.path())
+            .env("HOME", &self.root)
             .env("JOBOWALLS_TEST_LOG", &self.log);
         command
     }
@@ -194,6 +195,26 @@ exit 0
         );
     }
 
+    fn fake_ps_with_omarchy_swaybg(&self) {
+        let body = format!(
+            r#"#!/usr/bin/env bash
+printf 'ps %s\n' "$*" >>"${{JOBOWALLS_TEST_LOG:?}}"
+printf '444 /usr/bin/swaybg -i {}/.config/omarchy/current/background -m fill\n'
+exit 0
+"#,
+            self.root.display()
+        );
+        self.fake_program("ps", &body);
+    }
+
+    fn omarchy_current_background(&self) -> PathBuf {
+        self.root
+            .join(".config")
+            .join("omarchy")
+            .join("current")
+            .join("background")
+    }
+
     fn stdout(output: &Output) -> String {
         String::from_utf8_lossy(&output.stdout).to_string()
     }
@@ -236,6 +257,10 @@ fn wait_for_log_contains(path: &Path, needle: &str) -> bool {
         std::thread::sleep(std::time::Duration::from_millis(25));
     }
     false
+}
+
+fn read_link(path: &Path) -> PathBuf {
+    fs::read_link(path).unwrap()
 }
 
 #[test]
@@ -756,8 +781,9 @@ fn stop_live_terminates_only_recorded_mpvpaper_pids_and_clears_them() {
 fn static_swaybg_set_for_named_monitor_stops_only_that_live_pid() {
     let harness = CliHarness::new();
     harness.fake_swaybg();
+    harness.fake_hyprctl_monitors();
     harness.fake_kill_all_success();
-    harness.fake_ps_without_omarchy_swaybg();
+    harness.fake_ps_with_omarchy_swaybg();
     let wallpaper = harness.root.join("wall.png");
     write_png(&wallpaper);
     let canonical = fs::canonicalize(&wallpaper).unwrap();
@@ -801,6 +827,7 @@ fn static_swaybg_set_for_named_monitor_stops_only_that_live_pid() {
     let log = fs::read_to_string(&harness.log).unwrap();
     assert!(log.contains("kill 111"));
     assert!(!log.contains("kill 222"));
+    assert!(!log.contains("kill 444"));
 
     let state: Value = serde_json::from_str(&fs::read_to_string(&harness.state).unwrap()).unwrap();
     assert_eq!(state["active_backend"], "swaybg");
@@ -812,6 +839,170 @@ fn static_swaybg_set_for_named_monitor_stops_only_that_live_pid() {
     assert!(state["monitors"]["DP-1"]["pid"].as_u64().is_some());
     assert_eq!(state["monitors"]["HDMI-A-1"]["backend"], "mpvpaper");
     assert_eq!(state["monitors"]["HDMI-A-1"]["pid"], 222);
+    assert_eq!(read_link(&harness.omarchy_current_background()), canonical);
+}
+
+#[test]
+fn static_swaybg_set_for_secondary_monitor_preserves_existing_omarchy_background_link() {
+    let harness = CliHarness::new();
+    harness.fake_swaybg();
+    harness.fake_hyprctl_monitors();
+    harness.fake_ps_without_omarchy_swaybg();
+    let old_wallpaper = harness.root.join("old.png");
+    let wallpaper = harness.root.join("wall.png");
+    write_png(&old_wallpaper);
+    write_png(&wallpaper);
+    let link = harness.omarchy_current_background();
+    fs::create_dir_all(link.parent().unwrap()).unwrap();
+    symlink(&old_wallpaper, &link).unwrap();
+
+    let output = harness.run(&[
+        "set",
+        wallpaper.to_str().unwrap(),
+        "--backend",
+        "swaybg",
+        "--monitor",
+        "HDMI-A-1",
+    ]);
+    assert_success(&output);
+
+    assert_eq!(read_link(&link), old_wallpaper);
+}
+
+#[test]
+fn static_swaybg_set_for_all_replaces_existing_omarchy_background_link() {
+    let harness = CliHarness::new();
+    harness.fake_swaybg();
+    harness.fake_hyprctl_monitors();
+    harness.fake_ps_without_omarchy_swaybg();
+    let old_wallpaper = harness.root.join("old.png");
+    let wallpaper = harness.root.join("wall.png");
+    write_png(&old_wallpaper);
+    write_png(&wallpaper);
+    let link = harness.omarchy_current_background();
+    fs::create_dir_all(link.parent().unwrap()).unwrap();
+    symlink(&old_wallpaper, &link).unwrap();
+
+    let output = harness.run(&[
+        "set",
+        wallpaper.to_str().unwrap(),
+        "--backend",
+        "swaybg",
+        "--monitor",
+        "all",
+    ]);
+    assert_success(&output);
+
+    assert_eq!(read_link(&link), fs::canonicalize(&wallpaper).unwrap());
+}
+
+#[test]
+fn adopt_omarchy_claims_current_background_as_per_monitor_swaybg_state() {
+    let harness = CliHarness::new();
+    harness.fake_swaybg();
+    harness.fake_hyprctl_monitors();
+    harness.fake_ps_with_omarchy_swaybg();
+    harness.fake_kill_all_success();
+    let wallpaper = harness.root.join("wall.png");
+    write_png(&wallpaper);
+    let link = harness.omarchy_current_background();
+    fs::create_dir_all(link.parent().unwrap()).unwrap();
+    symlink(&wallpaper, &link).unwrap();
+
+    let output = harness.run(&["adopt-omarchy", "--json"]);
+    assert_success(&output);
+
+    let value: Value = serde_json::from_str(&CliHarness::stdout(&output)).unwrap();
+    assert_eq!(value["adopted"], true);
+    assert_eq!(
+        value["wallpaper"],
+        fs::canonicalize(&wallpaper).unwrap().display().to_string()
+    );
+
+    let log = fs::read_to_string(&harness.log).unwrap();
+    assert!(log.contains("kill 444"));
+    assert!(log.contains("swaybg -i"));
+    assert!(log.contains("-o DP-1"));
+    assert!(log.contains("-o HDMI-A-1"));
+
+    let state: Value = serde_json::from_str(&fs::read_to_string(&harness.state).unwrap()).unwrap();
+    assert_eq!(state["active_backend"], "swaybg");
+    assert_eq!(state["monitors"]["DP-1"]["wallpaper"], value["wallpaper"]);
+    assert_eq!(
+        state["monitors"]["HDMI-A-1"]["wallpaper"],
+        value["wallpaper"]
+    );
+    assert!(state["monitors"]["DP-1"]["pid"].as_u64().is_some());
+    assert!(state["monitors"]["HDMI-A-1"]["pid"].as_u64().is_some());
+}
+
+#[test]
+fn live_set_does_not_update_omarchy_background_link() {
+    let harness = CliHarness::new();
+    harness.fake_hyprctl_monitors();
+    harness.fake_ps_without_omarchy_swaybg();
+    harness.fake_kill_all_success();
+    harness.fake_program(
+        "mpvpaper",
+        r#"#!/usr/bin/env bash
+printf 'mpvpaper %s\n' "$*" >>"${JOBOWALLS_TEST_LOG:?}"
+if [[ "$*" == "--help" ]]; then
+  exit 0
+fi
+if [[ "$*" == "--help-output" ]]; then
+  printf 'DP-1\n'
+  exit 0
+fi
+socket="${2#*input-ipc-server=}"
+socket="${socket%% *}"
+python3 - "$socket" <<'PY'
+import os
+import socket
+import sys
+import time
+
+path = sys.argv[1]
+try:
+    os.unlink(path)
+except FileNotFoundError:
+    pass
+
+server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+server.bind(path)
+server.listen(1)
+deadline = time.time() + 2
+while time.time() < deadline:
+    server.settimeout(max(0.1, deadline - time.time()))
+    try:
+        conn, _ = server.accept()
+    except TimeoutError:
+        continue
+    with conn:
+        conn.recv(4096)
+        conn.sendall(b'{"request_id":1,"error":"success","data":{"w":3840,"h":2160}}\n')
+server.close()
+PY
+"#,
+    );
+    let old_wallpaper = harness.root.join("old.png");
+    let wallpaper = harness.root.join("live.mp4");
+    write_png(&old_wallpaper);
+    fs::write(&wallpaper, b"not really mp4").unwrap();
+    let link = harness.omarchy_current_background();
+    fs::create_dir_all(link.parent().unwrap()).unwrap();
+    symlink(&old_wallpaper, &link).unwrap();
+
+    let output = harness.run(&[
+        "set",
+        wallpaper.to_str().unwrap(),
+        "--backend",
+        "mpvpaper",
+        "--monitor",
+        "DP-1",
+    ]);
+    assert_success(&output);
+
+    assert_eq!(read_link(&link), old_wallpaper);
 }
 
 #[test]

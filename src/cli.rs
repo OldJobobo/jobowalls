@@ -8,11 +8,16 @@ use crate::{
         scan_collection, select_next_persistent, select_previous_persistent,
         select_shuffle_persistent,
     },
+    collections_store::{CollectionDetail, CollectionRegistry, default_collections_path},
     command::{CommandSpec, pid_is_running, program_available, signal_pid, terminate_pid},
     config::{BackendPreference, Config, StaticBackendPreference},
     monitors,
     orchestrator::{SetPlan, plan_set},
     state::State,
+    theme_collections::{
+        ThemeCollectionAddTarget, add_to_theme_collection, get_theme_collection,
+        list_theme_collections,
+    },
 };
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -70,6 +75,18 @@ enum Command {
     Next(CollectionArgs),
     Previous(CollectionArgs),
     Shuffle(CollectionArgs),
+    Collection {
+        #[command(subcommand)]
+        command: CollectionCommand,
+    },
+    ThemeCollections {
+        #[command(subcommand)]
+        command: ThemeCollectionsCommand,
+    },
+    AdoptOmarchy {
+        #[arg(long)]
+        json: bool,
+    },
     Daemon {
         #[arg(long)]
         once: bool,
@@ -89,6 +106,95 @@ enum ConfigCommand {
         force: bool,
     },
     PrintDefault,
+}
+
+#[derive(Debug, Subcommand)]
+enum CollectionCommand {
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    Create {
+        name: String,
+
+        #[arg(long)]
+        id: Option<String>,
+
+        #[arg(long, value_name = "PATH")]
+        source_folder: Option<PathBuf>,
+
+        #[arg(long)]
+        json: bool,
+    },
+    Show {
+        id: String,
+
+        #[arg(long)]
+        json: bool,
+    },
+    Add {
+        id: String,
+
+        #[arg(required = true)]
+        paths: Vec<PathBuf>,
+
+        #[arg(long)]
+        json: bool,
+    },
+    Remove {
+        id: String,
+        path: PathBuf,
+
+        #[arg(long)]
+        json: bool,
+    },
+    Delete {
+        id: String,
+
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum ThemeCollectionsCommand {
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    Show {
+        id: String,
+
+        #[arg(long)]
+        json: bool,
+    },
+    Add {
+        id: String,
+        path: PathBuf,
+
+        #[arg(long, value_enum)]
+        target: Option<ThemeCollectionAddTargetArg>,
+
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum ThemeCollectionAddTargetArg {
+    UserBackgrounds,
+    ThemeRepo,
+}
+
+impl From<ThemeCollectionAddTargetArg> for ThemeCollectionAddTarget {
+    fn from(value: ThemeCollectionAddTargetArg) -> Self {
+        match value {
+            ThemeCollectionAddTargetArg::UserBackgrounds => {
+                ThemeCollectionAddTarget::UserBackgrounds
+            }
+            ThemeCollectionAddTargetArg::ThemeRepo => ThemeCollectionAddTarget::ThemeRepo,
+        }
+    }
 }
 
 #[derive(Debug, clap::Args)]
@@ -201,6 +307,15 @@ pub fn run() -> Result<()> {
         Command::Shuffle(args) => {
             execute_collection_step(CollectionStep::Shuffle, args, &config, &paths.state)?;
         }
+        Command::Collection { command } => {
+            execute_collection_command(command, &paths.collections)?;
+        }
+        Command::ThemeCollections { command } => {
+            execute_theme_collections_command(command, &config)?;
+        }
+        Command::AdoptOmarchy { json } => {
+            execute_adopt_omarchy_background(&config, &paths.state, json)?;
+        }
         Command::Daemon { once } => {
             run_daemon(&config, &paths.state, once)?;
         }
@@ -227,6 +342,251 @@ enum CollectionStep {
     Next,
     Previous,
     Shuffle,
+}
+
+fn execute_collection_command(command: CollectionCommand, path: &Path) -> Result<()> {
+    let mut registry = CollectionRegistry::load(path)?;
+
+    match command {
+        CollectionCommand::List { json } => {
+            let summaries = registry.list()?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&summaries)?);
+            } else if summaries.is_empty() {
+                println!("no collections found at {}", path.display());
+            } else {
+                for summary in summaries {
+                    println!(
+                        "{}\t{}\t{} wallpaper{}",
+                        summary.id,
+                        summary.name,
+                        summary.count,
+                        if summary.count == 1 { "" } else { "s" }
+                    );
+                }
+            }
+        }
+        CollectionCommand::Create {
+            name,
+            id,
+            source_folder,
+            json,
+        } => {
+            let summary = registry.create(&name, id.as_deref(), source_folder)?;
+            registry.save(path)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&summary)?);
+            } else {
+                println!("created collection {} ({})", summary.name, summary.id);
+            }
+        }
+        CollectionCommand::Show { id, json } => {
+            let detail = registry.detail(&id)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&detail)?);
+            } else {
+                print_collection_detail(&detail);
+            }
+        }
+        CollectionCommand::Add { id, paths, json } => {
+            let detail = registry.add_items(&id, &paths)?;
+            registry.save(path)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&detail)?);
+            } else {
+                println!(
+                    "{} now has {} wallpaper{}",
+                    detail.name,
+                    detail.count,
+                    if detail.count == 1 { "" } else { "s" }
+                );
+            }
+        }
+        CollectionCommand::Remove {
+            id,
+            path: item,
+            json,
+        } => {
+            let detail = registry.remove_item(&id, &item)?;
+            registry.save(path)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&detail)?);
+            } else {
+                println!(
+                    "{} now has {} wallpaper{}",
+                    detail.name,
+                    detail.count,
+                    if detail.count == 1 { "" } else { "s" }
+                );
+            }
+        }
+        CollectionCommand::Delete { id, json } => {
+            let summary = registry.delete(&id)?;
+            registry.save(path)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&summary)?);
+            } else {
+                println!("deleted collection {} ({})", summary.name, summary.id);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn print_collection_detail(detail: &CollectionDetail) {
+    println!("collection: {} ({})", detail.name, detail.id);
+    println!("wallpapers: {}", detail.count);
+    if let Some(source_folder) = &detail.source_folder {
+        println!("source_folder: {source_folder}");
+    }
+    for item in &detail.items {
+        println!("  {:?}\t{}", item.kind, item.path);
+    }
+}
+
+fn execute_theme_collections_command(
+    command: ThemeCollectionsCommand,
+    config: &Config,
+) -> Result<()> {
+    match command {
+        ThemeCollectionsCommand::List { json } => {
+            let summaries = list_theme_collections(&config.gui.theme_collections)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&summaries)?);
+            } else if summaries.is_empty() {
+                println!("no theme collections found");
+            } else {
+                for summary in summaries {
+                    println!(
+                        "{}\t{}\t{} wallpaper{}\t{:?}",
+                        summary.id,
+                        summary.name,
+                        summary.count,
+                        if summary.count == 1 { "" } else { "s" },
+                        summary.source
+                    );
+                }
+            }
+        }
+        ThemeCollectionsCommand::Show { id, json } => {
+            let detail = get_theme_collection(&config.gui.theme_collections, &id)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&detail)?);
+            } else {
+                println!(
+                    "theme collection: {} ({})",
+                    detail.summary.name, detail.summary.id
+                );
+                println!("wallpapers: {}", detail.summary.count);
+                println!("source: {:?}", detail.summary.source);
+                println!("user_backgrounds: {}", detail.summary.user_backgrounds_path);
+                println!(
+                    "theme_backgrounds: {}",
+                    detail.summary.theme_backgrounds_path
+                );
+                for item in detail.items {
+                    println!("  {:?}\t{}", item.kind, item.path);
+                }
+            }
+        }
+        ThemeCollectionsCommand::Add {
+            id,
+            path,
+            target,
+            json,
+        } => {
+            let import = add_to_theme_collection(
+                &config.gui.theme_collections,
+                &id,
+                &path,
+                target.map(Into::into),
+            )?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&import)?);
+            } else {
+                println!("copied wallpaper to {}", import.copied_path);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn execute_adopt_omarchy_background(
+    config: &Config,
+    state_path: &Path,
+    json_output: bool,
+) -> Result<()> {
+    let pids = omarchy_swaybg_pids();
+    if pids.is_empty() {
+        print_adopt_omarchy_result(json_output, false, "no omarchy swaybg process found", None)?;
+        return Ok(());
+    }
+
+    let Some(link) = omarchy_current_background_path() else {
+        print_adopt_omarchy_result(
+            json_output,
+            false,
+            "unable to resolve omarchy background path",
+            None,
+        )?;
+        return Ok(());
+    };
+    if !link.exists() {
+        print_adopt_omarchy_result(
+            json_output,
+            false,
+            "omarchy current background does not exist",
+            None,
+        )?;
+        return Ok(());
+    }
+
+    let wallpaper = fs::canonicalize(&link).with_context(|| {
+        format!(
+            "failed to resolve Omarchy current background {}",
+            link.display()
+        )
+    })?;
+    let mut plan = plan_set(
+        config,
+        &wallpaper,
+        Some("all".to_string()),
+        BackendArg::Swaybg.into(),
+    )?;
+    apply_runtime_auto_backend(&mut plan, config, BackendArg::Swaybg);
+    execute_set_plan_with_output(&plan, config, state_path, false)?;
+    print_adopt_omarchy_result(
+        json_output,
+        true,
+        "adopted omarchy background",
+        Some(&wallpaper),
+    )
+}
+
+fn print_adopt_omarchy_result(
+    json_output: bool,
+    adopted: bool,
+    message: &str,
+    wallpaper: Option<&Path>,
+) -> Result<()> {
+    if json_output {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "adopted": adopted,
+                "message": message,
+                "wallpaper": wallpaper.map(|path| path.display().to_string()),
+            }))?
+        );
+    } else if let Some(wallpaper) = wallpaper {
+        println!("{message}: {}", wallpaper.display());
+    } else {
+        println!("{message}");
+    }
+
+    Ok(())
 }
 
 fn execute_collection_step(
@@ -472,6 +832,15 @@ fn apply_runtime_auto_backend(plan: &mut SetPlan, config: &Config, backend_arg: 
 }
 
 fn execute_set_plan(plan: &SetPlan, config: &Config, state_path: &std::path::Path) -> Result<()> {
+    execute_set_plan_with_output(plan, config, state_path, true)
+}
+
+fn execute_set_plan_with_output(
+    plan: &SetPlan,
+    config: &Config,
+    state_path: &std::path::Path,
+    print_output: bool,
+) -> Result<()> {
     ensure_backend_available(plan.backend)?;
     let existing_state = State::load(state_path)?;
     let existing_collections = existing_state
@@ -506,11 +875,15 @@ fn execute_set_plan(plan: &SetPlan, config: &Config, state_path: &std::path::Pat
             state.collections = existing_collections;
             state.record_last_command(last_set_command(plan));
             state.save(state_path)?;
-            print_live_started(plan, &entries);
+            if print_output {
+                print_live_started(plan, &entries);
+            }
         }
         Backend::Awww => {
             if let Some(pid) = ensure_awww_daemon()? {
-                println!("started awww-daemon with pid {pid}");
+                if print_output {
+                    println!("started awww-daemon with pid {pid}");
+                }
             }
             let monitors = if plan.monitor == "all" {
                 monitors::names()?
@@ -529,6 +902,7 @@ fn execute_set_plan(plan: &SetPlan, config: &Config, state_path: &std::path::Pat
                 awww::apply_command(plan, &config.awww)
             };
             command.run()?;
+            sync_omarchy_background_for_static(plan)?;
             stop_owned_live_for_monitors(state_path, &target_monitors)?;
             let mut state = State::merged_with_monitor_entries(
                 existing_state.as_ref(),
@@ -538,41 +912,43 @@ fn execute_set_plan(plan: &SetPlan, config: &Config, state_path: &std::path::Pat
             state.collections = existing_collections;
             state.record_last_command(last_set_command(plan));
             state.save(state_path)?;
-            println!(
-                "set {} on {} using {}",
-                plan.wallpaper.display(),
-                plan.monitor,
-                plan.backend
-            );
+            if print_output {
+                println!(
+                    "set {} on {} using {}",
+                    plan.wallpaper.display(),
+                    plan.monitor,
+                    plan.backend
+                );
+            }
         }
         Backend::Swaybg => {
-            let monitors = if plan.monitor == "all" {
-                monitors::names()?
-            } else {
-                vec![plan.monitor.clone()]
-            };
-            let target_monitors = target_monitor_names(plan, &monitors)?;
+            let plans = target_monitor_plans(plan)?;
+            let target_monitors = plans
+                .iter()
+                .map(|plan| plan.monitor.clone())
+                .collect::<Vec<_>>();
             stop_owned_swaybg_for_monitors(state_path, &target_monitors)?;
             stop_owned_live_for_monitors(state_path, &target_monitors)?;
-            terminate_pids(&omarchy_swaybg_pids())?;
+            stop_omarchy_swaybg_for_plan(plan)?;
 
-            let mut child = swaybg::start_command(plan).spawn_detached_child()?;
-            ensure_spawned_process_still_running(&mut child, "swaybg")?;
-            let pid = child.id();
+            let started = start_swaybg_plans(&plans)?;
+            sync_omarchy_background_for_static(plan)?;
             let mut state = State::merged_with_monitor_entries(
                 existing_state.as_ref(),
                 plan,
-                static_entries_with_pid(plan, &monitors, Some(pid)),
+                started_swaybg_entries(&started),
             );
             state.collections = existing_collections;
             state.record_last_command(last_set_command(plan));
             state.save(state_path)?;
-            println!(
-                "set {} on {} using {}",
-                plan.wallpaper.display(),
-                plan.monitor,
-                plan.backend
-            );
+            if print_output {
+                println!(
+                    "set {} on {} using {}",
+                    plan.wallpaper.display(),
+                    plan.monitor,
+                    plan.backend
+                );
+            }
         }
     }
 
@@ -613,6 +989,89 @@ fn ensure_spawned_process_still_running(child: &mut Child, description: &str) ->
         bail!("{description} exited immediately after start");
     }
     Ok(())
+}
+
+fn sync_omarchy_background_for_static(plan: &SetPlan) -> Result<()> {
+    if plan.media_kind != crate::media::MediaKind::Static {
+        return Ok(());
+    }
+    if !plan_targets_omarchy_tracked_background(plan) {
+        return Ok(());
+    }
+
+    let Some(path) = omarchy_current_background_path() else {
+        return Ok(());
+    };
+
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "failed to create Omarchy background dir {}",
+                parent.display()
+            )
+        })?;
+    }
+
+    replace_symlink(&plan.wallpaper, &path).with_context(|| {
+        format!(
+            "failed to update Omarchy current background {}",
+            path.display()
+        )
+    })
+}
+
+fn plan_targets_omarchy_tracked_background(plan: &SetPlan) -> bool {
+    if plan.monitor == "all" {
+        return true;
+    }
+
+    main_monitor_name()
+        .as_deref()
+        .is_some_and(|monitor| monitor == plan.monitor)
+}
+
+fn main_monitor_name() -> Option<String> {
+    monitors::names()
+        .ok()
+        .and_then(|monitors| monitors.into_iter().next())
+}
+
+fn stop_omarchy_swaybg_for_plan(plan: &SetPlan) -> Result<()> {
+    if plan.monitor == "all" {
+        terminate_pids(&omarchy_swaybg_pids())?;
+    }
+
+    Ok(())
+}
+
+fn omarchy_current_background_path() -> Option<PathBuf> {
+    dirs::home_dir().map(|home| {
+        home.join(".config")
+            .join("omarchy")
+            .join("current")
+            .join("background")
+    })
+}
+
+#[cfg(unix)]
+fn replace_symlink(target: &Path, link: &Path) -> Result<()> {
+    use std::os::unix::fs::symlink;
+
+    match fs::remove_file(link) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(error).with_context(|| format!("failed to remove {}", link.display()));
+        }
+    }
+
+    symlink(target, link).with_context(|| {
+        format!(
+            "failed to symlink {} to {}",
+            link.display(),
+            target.display()
+        )
+    })
 }
 
 fn last_set_command(plan: &SetPlan) -> String {
@@ -843,6 +1302,48 @@ fn static_entries_with_pid(
     }
 
     vec![(plan.monitor.clone(), pid)]
+}
+
+#[derive(Debug)]
+struct StartedSwaybg {
+    monitor: String,
+    pid: u32,
+}
+
+fn start_swaybg_plans(plans: &[SetPlan]) -> Result<Vec<StartedSwaybg>> {
+    let mut started = Vec::new();
+
+    for plan in plans {
+        let mut child = match swaybg::start_command(plan).spawn_detached_child() {
+            Ok(child) => child,
+            Err(error) => {
+                let _ = terminate_pids(&started_swaybg_pids(&started));
+                return Err(error);
+            }
+        };
+        if let Err(error) = ensure_spawned_process_still_running(&mut child, "swaybg") {
+            let _ = terminate_pids(&started_swaybg_pids(&started));
+            let _ = terminate_pid(child.id());
+            return Err(error);
+        }
+        started.push(StartedSwaybg {
+            monitor: plan.monitor.clone(),
+            pid: child.id(),
+        });
+    }
+
+    Ok(started)
+}
+
+fn started_swaybg_entries(started: &[StartedSwaybg]) -> Vec<(String, Option<u32>)> {
+    started
+        .iter()
+        .map(|entry| (entry.monitor.clone(), Some(entry.pid)))
+        .collect()
+}
+
+fn started_swaybg_pids(started: &[StartedSwaybg]) -> Vec<u32> {
+    started.iter().map(|entry| entry.pid).collect()
 }
 
 #[derive(Debug)]
@@ -1269,7 +1770,9 @@ fn print_set_plan(plan: &crate::orchestrator::SetPlan, config: &Config) -> Resul
             println!("command: {}", awww::apply_command(plan, &config.awww));
         }
         Backend::Swaybg => {
-            println!("command: {}", swaybg::start_command(plan));
+            for plan in target_monitor_plans(plan)? {
+                println!("command: {}", swaybg::start_command(&plan));
+            }
         }
     }
 
@@ -1384,12 +1887,15 @@ fn backend_adapter(backend: Backend) -> &'static dyn WallpaperBackend {
 struct RuntimePaths {
     config: PathBuf,
     state: PathBuf,
+    collections: PathBuf,
 }
 
 impl RuntimePaths {
     fn resolve(config: Option<PathBuf>, state: Option<PathBuf>) -> Result<Self> {
+        let config = config.unwrap_or_else(default_config_path);
         Ok(Self {
-            config: config.unwrap_or_else(default_config_path),
+            collections: collections_path_for_config(&config),
+            config,
             state: state.unwrap_or_else(default_state_path),
         })
     }
@@ -1418,6 +1924,13 @@ fn default_state_path() -> PathBuf {
                 .join("state.json")
         })
         .unwrap_or_else(|_| PathBuf::from("state.json"))
+}
+
+fn collections_path_for_config(config: &Path) -> PathBuf {
+    config
+        .parent()
+        .map(|parent| parent.join("collections.toml"))
+        .unwrap_or_else(default_collections_path)
 }
 
 #[cfg(test)]
